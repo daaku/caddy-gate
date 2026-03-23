@@ -1,0 +1,13 @@
+{
+	admin off
+	auto_https disable_redirects
+}
+
+caddygate.internal {
+	caddygate portal
+}
+
+protected.internal {
+	tls internal
+	caddygate guard
+}
