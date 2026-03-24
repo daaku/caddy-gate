@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -9,6 +8,8 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/daaku/serr"
@@ -29,29 +30,56 @@ func maxAge(d time.Duration) int {
 	return int(d.Seconds())
 }
 
-// webauthnUser implements webauthn.User
-type webauthnUser struct {
-	id          []byte
-	name        string
-	displayName string
-	credentials []webauthn.Credential
-}
-
-func (u *webauthnUser) WebAuthnID() []byte                         { return u.id }
-func (u *webauthnUser) WebAuthnName() string                       { return u.name }
-func (u *webauthnUser) WebAuthnDisplayName() string                { return u.displayName }
-func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
-
 type Config struct {
 	Secret []byte
 }
 
-type Store interface {
-	Save(context.Context, *webauthn.Credential) error
+// User implements webauthn.User.
+type User struct {
+	ID          string
+	DisplayName string
+	Tags        []string
+	Credentials []webauthn.Credential
+}
+
+func (u User) WebAuthnID() []byte                         { return []byte(u.ID) }
+func (u User) WebAuthnName() string                       { return u.DisplayName }
+func (u User) WebAuthnDisplayName() string                { return u.DisplayName }
+func (u User) WebAuthnCredentials() []webauthn.Credential { return u.Credentials }
+
+type Store struct {
+	Path  string
+	Lock  sync.Mutex
+	Users atomic.Pointer[map[string]User]
+}
+
+func (s *Store) Save(userID string, credential *webauthn.Credential) error {
+	s.Lock.Lock()
+	defer s.Lock.Unlock()
+	// TODO: write to file
+	for {
+		e := s.Users.Load()
+		eNew := make(map[string]User, len(*e))
+		for k, v := range *e {
+			if k == userID {
+				v.Credentials = append(v.Credentials, *credential)
+			}
+			eNew[k] = v
+		}
+		if s.Users.CompareAndSwap(e, &eNew) {
+			break
+		}
+	}
+	return nil
+}
+
+func (s *Store) ByID(userID string) (User, bool) {
+	user, found := (*s.Users.Load())[userID]
+	return user, found
 }
 
 type invite struct {
-	User      webauthnUser
+	UserID    string
 	ExpiresAt time.Time
 }
 
@@ -59,11 +87,25 @@ func (i *invite) expired() bool {
 	return i.ExpiresAt.After(time.Now())
 }
 
+func mapSet[T any](m *atomic.Pointer[map[string]T], k string, v T) {
+	for {
+		e := m.Load()
+		eNew := make(map[string]T, len(*e))
+		for k, v := range *e {
+			eNew[k] = v
+		}
+		eNew[k] = v
+		if m.CompareAndSwap(e, &eNew) {
+			return
+		}
+	}
+}
+
 type App struct {
 	Config   Config
 	WebAuthN *webauthn.WebAuthn
-	Invites  map[string]invite
-	Store    Store
+	invites  atomic.Pointer[map[string]invite]
+	Users    Store
 }
 
 func (a *App) registerCookie() http.Cookie {
@@ -105,18 +147,19 @@ func (a *App) createInvite(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (a *App) inviteUser(r *http.Request) (webauthn.User, error) {
-	invite, found := a.Invites[r.PathValue("invite")]
-	if !found {
-		return nil, httpError(func(w http.ResponseWriter, r *http.Request) {
+func (a *App) inviteUser(r *http.Request) (User, error) {
+	invite, found := (*a.invites.Load())[r.PathValue("invite")]
+	if !found || invite.expired() {
+		return User{}, httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			a.pageError(w, r, g.Text("No valid invite found.")).Render(w)
 		})
 	}
-	if invite.expired() {
-		// TODO
+	user, found := a.Users.ByID(invite.UserID)
+	if !found {
+		return User{}, serr.Errorf("invalid user id in invite: %s", invite.UserID)
 	}
-	return &invite.User, nil
+	return user, nil
 }
 
 func (a *App) registerBegin(w http.ResponseWriter, r *http.Request) error {
@@ -149,12 +192,6 @@ func (a *App) registerFinish(w http.ResponseWriter, r *http.Request) error {
 	sessionData, err := sookie.Get[webauthn.SessionData](
 		a.Config.Secret, r, a.registerCookie().Name)
 	if err != nil {
-		if errors.Is(err, http.ErrNoCookie) {
-			// TODO
-		}
-		if errors.Is(err, sookie.ErrExpired) {
-			// TODO
-		}
 		return serr.Wrap(err)
 	}
 
@@ -171,7 +208,7 @@ func (a *App) registerFinish(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	if err := a.Store.Save(r.Context(), credential); err != nil {
+	if err := a.Users.Save(user.ID, credential); err != nil {
 		return err
 	}
 
