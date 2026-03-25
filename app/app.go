@@ -4,7 +4,9 @@ package app
 
 import (
 	"bytes"
+	"crypto/rand"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -107,12 +109,34 @@ func NewStore(filename string) (*Store, error) {
 	if err := json.Unmarshal(jsonB, &users); err != nil {
 		return nil, serr.Wrap(err)
 	}
+	if len(users) == 0 {
+		return nil, serr.Errorf("at least one user must be defined in %q", filename)
+	}
+
+	var adminUserID string
+	var foundAdminCredentials bool
+	for _, u := range users {
+		if slices.Contains(u.Tags, "admin") {
+			if len(u.Credentials) > 0 {
+				foundAdminCredentials = true
+			}
+			adminUserID = u.ID
+		}
+	}
+
+	if adminUserID == "" {
+		return nil, serr.Errorf("at least one admin user must be defined in %q", filename)
+	}
+	if !foundAdminCredentials {
+	}
+
 	s := Store{Path: filename}
 	s.Users.Store(&users)
 	return &s, nil
 }
 
 type invite struct {
+	ID        string
 	UserID    string
 	ExpiresAt time.Time
 }
@@ -133,12 +157,59 @@ func mutateMap[T any](m *atomic.Pointer[map[string]T], f func(map[string]T)) {
 	}
 }
 
+func genRandomID() string {
+	var id [16]byte
+	rand.Read(id[:])
+	return base64.RawURLEncoding.EncodeToString(id[:])
+}
+
+type inviteStore struct {
+	invites []*invite
+	lock    sync.RWMutex
+}
+
+var errInviteNotFound = errors.New("invite not found")
+
+func (s *inviteStore) Get(inviteID string) (*invite, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	i := slices.IndexFunc(s.invites, func(i *invite) bool {
+		return i.ID == inviteID
+	})
+	if i == -1 {
+		return nil, serr.Errorf("%w %q", errInviteNotFound, inviteID)
+	}
+	return s.invites[i], nil
+}
+
+func (s *inviteStore) Create(i *invite) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	if i.ID == "" {
+		i.ID = genRandomID()
+	}
+	if i.ExpiresAt.IsZero() {
+		i.ExpiresAt = time.Now().Add(time.Minute * 10)
+	}
+	s.invites = append(s.invites, i)
+	return nil
+}
+
+func (s *inviteStore) Delete(inviteID string) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.invites = slices.DeleteFunc(s.invites, func(i *invite) bool {
+		return i.ID == inviteID
+	})
+	return nil
+}
+
 type App struct {
 	Config   Config
 	WebAuthN *webauthn.WebAuthn
 	Users    *Store
 
-	invites            atomic.Pointer[map[string]invite]
+	invites            inviteStore
 	registerCookieName string
 	loginCookieName    string
 	authCookieName     string
@@ -173,7 +244,6 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 		loginCookieName:    c.CookieNamePrefix + "l",
 		authCookieName:     c.CookieNamePrefix + "a",
 	}
-	a.invites.Store(&map[string]invite{})
 	m := http.NewCrossOriginProtection().Handler(a.mux())
 	a.handler = m.ServeHTTP
 	return a, nil
@@ -237,12 +307,15 @@ func (a *App) currentUser(r *http.Request) (User, error) {
 // returns the user from the invite
 func (a *App) inviteUser(r *http.Request) (string, User, error) {
 	inviteID := r.PathValue("invite")
-	invite, found := (*a.invites.Load())[inviteID]
-	if !found || invite.expired() {
+	invite, err := a.invites.Get(inviteID)
+	if errors.Is(err, errInviteNotFound) || invite != nil && invite.expired() {
 		return "", User{}, httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			a.pageError(g.Text("No valid invite found.")).Render(w)
 		})
+	}
+	if err != nil {
+		return "", User{}, err
 	}
 	user, err := a.Users.ByID(invite.UserID)
 	if err != nil {
@@ -266,6 +339,8 @@ func (a *App) inviteGet(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+const inputUserID = "userID"
+
 func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	user, err := a.currentUser(r)
 	if err != nil {
@@ -274,6 +349,11 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 
 	if !slices.Contains(user.Tags, "admin") {
 		return serr.Errorf("only admins can create invites")
+	}
+
+	i := &invite{UserID: r.FormValue(inputUserID)}
+	if err := a.invites.Create(i); err != nil {
+		return err
 	}
 
 	// TODO render qr code and share invite ui
@@ -331,9 +411,9 @@ func (a *App) registerPost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	mutateMap(&a.invites, func(m map[string]invite) {
-		delete(m, inviteID)
-	})
+	if err := a.invites.Delete(inviteID); err != nil {
+		return err
+	}
 
 	if err := sookie.Set(a.Config.CookieSecret, w, user.ID, a.authCookie()); err != nil {
 		return serr.Wrap(err)
