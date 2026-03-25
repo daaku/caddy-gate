@@ -318,11 +318,11 @@ func (a *App) mux() *http.ServeMux {
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
-//go:embed main.js
-var mainJS string
+//go:embed app.js
+var appJS string
 
-//go:embed main.css
-var mainCSS string
+//go:embed app.css
+var appCSS string
 
 func (a *App) pageShell(title string, body g.Node) g.Node {
 	return h.Doctype(
@@ -330,8 +330,8 @@ func (a *App) pageShell(title string, body g.Node) g.Node {
 			h.Head(h.Meta(h.Charset("utf-8")),
 				h.Meta(h.Name("viewport"), h.Content("width=device-width, initial-scale=1")),
 				h.TitleEl(g.Text(title)),
-				h.Style(mainCSS),
-				h.Script(g.Raw(mainJS))),
+				h.Style(appCSS),
+				h.Script(g.Raw(appJS))),
 			body))
 }
 
