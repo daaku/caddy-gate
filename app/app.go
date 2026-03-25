@@ -61,17 +61,17 @@ func (u User) WebAuthnName() string                       { return u.DisplayName
 func (u User) WebAuthnDisplayName() string                { return u.DisplayName }
 func (u User) WebAuthnCredentials() []webauthn.Credential { return u.Credentials }
 
-type Store struct {
-	Path  string
-	Lock  sync.Mutex
-	Users atomic.Pointer[map[string]User]
+type userStore struct {
+	path  string
+	lock  sync.Mutex
+	users atomic.Pointer[map[string]User]
 }
 
-func (s *Store) Save(userID string, credential *webauthn.Credential) error {
-	s.Lock.Lock()
-	defer s.Lock.Unlock()
+func (s *userStore) Save(userID string, credential *webauthn.Credential) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-	e := *s.Users.Load()
+	e := *s.users.Load()
 	eNew := make(map[string]User, len(e))
 	maps.Copy(eNew, e)
 	u := eNew[userID]
@@ -83,24 +83,24 @@ func (s *Store) Save(userID string, credential *webauthn.Credential) error {
 		return serr.Wrap(err)
 	}
 
-	if err := atomicfile.WriteFile(s.Path, bytes.NewReader(jsonB)); err != nil {
+	if err := atomicfile.WriteFile(s.path, bytes.NewReader(jsonB)); err != nil {
 		return serr.Wrap(err)
 	}
-	s.Users.Store(&eNew)
+	s.users.Store(&eNew)
 	return nil
 }
 
 var ErrUserNotFound = errors.New("user not found")
 
-func (s *Store) ByID(userID string) (User, error) {
-	user, found := (*s.Users.Load())[userID]
+func (s *userStore) ByID(userID string) (User, error) {
+	user, found := (*s.users.Load())[userID]
 	if !found {
 		return User{}, serr.Wrap(ErrUserNotFound)
 	}
 	return user, nil
 }
 
-func NewStore(filename string) (*Store, error) {
+func NewStore(filename string) (*userStore, error) {
 	jsonB, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, serr.Wrap(err)
@@ -130,8 +130,8 @@ func NewStore(filename string) (*Store, error) {
 	if !foundAdminCredentials {
 	}
 
-	s := Store{Path: filename}
-	s.Users.Store(&users)
+	s := userStore{path: filename}
+	s.users.Store(&users)
 	return &s, nil
 }
 
@@ -207,7 +207,7 @@ func (s *inviteStore) Delete(inviteID string) error {
 type App struct {
 	Config   Config
 	WebAuthN *webauthn.WebAuthn
-	Users    *Store
+	Users    *userStore
 
 	invites            inviteStore
 	registerCookieName string
