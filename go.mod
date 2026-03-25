@@ -7,6 +7,7 @@ require (
 	github.com/daaku/serr v1.0.0
 	github.com/daaku/sookie v0.5.0
 	github.com/go-webauthn/webauthn v0.16.1
+	github.com/natefinch/atomic v1.0.1
 	maragu.dev/gomponents v1.2.0
 )
 

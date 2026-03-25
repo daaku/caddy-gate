@@ -3,6 +3,7 @@
 package app
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/daaku/sookie"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
+	atomicfile "github.com/natefinch/atomic"
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
 )
@@ -64,20 +66,23 @@ type Store struct {
 func (s *Store) Save(userID string, credential *webauthn.Credential) error {
 	s.Lock.Lock()
 	defer s.Lock.Unlock()
-	// TODO: write to file
-	for {
-		e := s.Users.Load()
-		eNew := make(map[string]User, len(*e))
-		for k, v := range *e {
-			if k == userID {
-				v.Credentials = append(v.Credentials, *credential)
-			}
-			eNew[k] = v
-		}
-		if s.Users.CompareAndSwap(e, &eNew) {
-			break
-		}
+
+	e := *s.Users.Load()
+	eNew := make(map[string]User, len(e))
+	maps.Copy(eNew, e)
+	u := eNew[userID]
+	u.Credentials = append(u.Credentials, *credential)
+	eNew[userID] = u
+
+	jsonB, err := json.MarshalIndent(eNew, "", "  ")
+	if err != nil {
+		return serr.Wrap(err)
 	}
+
+	if err := atomicfile.WriteFile(s.Path, bytes.NewReader(jsonB)); err != nil {
+		return serr.Wrap(err)
+	}
+	s.Users.Store(&eNew)
 	return nil
 }
 
