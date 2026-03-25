@@ -1,3 +1,5 @@
+// Package app provides the caddygate application to register & authorize via
+// passkeys.
 package app
 
 import (
@@ -7,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,7 +34,11 @@ func maxAge(d time.Duration) int {
 }
 
 type Config struct {
-	Secret []byte
+	CookieSecret     []byte
+	CookieDomain     string
+	CookiePath       string
+	CookieNamePrefix string
+	AuthCookieTTL    time.Duration
 }
 
 // User implements webauthn.User.
@@ -73,9 +80,14 @@ func (s *Store) Save(userID string, credential *webauthn.Credential) error {
 	return nil
 }
 
-func (s *Store) ByID(userID string) (User, bool) {
+var ErrUserNotFound = errors.New("user not found")
+
+func (s *Store) ByID(userID string) (User, error) {
 	user, found := (*s.Users.Load())[userID]
-	return user, found
+	if !found {
+		return User{}, serr.Wrap(ErrUserNotFound)
+	}
+	return user, nil
 }
 
 type invite struct {
@@ -104,27 +116,46 @@ func mapSet[T any](m *atomic.Pointer[map[string]T], k string, v T) {
 type App struct {
 	Config   Config
 	WebAuthN *webauthn.WebAuthn
-	invites  atomic.Pointer[map[string]invite]
 	Users    Store
+
+	invites            atomic.Pointer[map[string]invite]
+	registerCookieName string
+	authCookieName     string
+}
+
+func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
+	if c.CookiePath == "" {
+		c.CookiePath = "/"
+	}
+	if c.CookieDomain == "" {
+		c.CookieDomain = webauthn.Config.GetRPID()
+	}
+	if c.AuthCookieTTL == 0 {
+		c.AuthCookieTTL = time.Hour * 24 * 30
+	}
+	return &App{
+		Config:   c,
+		WebAuthN: webauthn,
+	}, nil
 }
 
 func (a *App) registerCookie() http.Cookie {
 	return http.Cookie{
-		Name:     "r",
-		Path:     "/",
-		Domain:   "daaku.org",
+		Name:     a.registerCookieName,
+		Path:     a.Config.CookiePath,
+		Domain:   a.Config.CookieDomain,
 		MaxAge:   maxAge(time.Minute * 10),
 		Secure:   true,
 		HttpOnly: true,
 	}
 }
 
-func (a *App) userCookie() http.Cookie {
+func (a *App) authCookie() http.Cookie {
 	return http.Cookie{
-		Name:     "u",
-		Path:     "/",
-		Domain:   "daaku.org",
-		MaxAge:   maxAge(time.Hour * 24 * 30),
+		Name:     a.authCookieName,
+		Path:     a.Config.CookiePath,
+		Domain:   a.Config.CookieDomain,
+		MaxAge:   maxAge(a.Config.AuthCookieTTL),
 		Secure:   true,
 		HttpOnly: true,
 	}
@@ -143,27 +174,64 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 	}
 }
 
-func (a *App) createInvite(w http.ResponseWriter, r *http.Request) error {
-	return nil
+// returns the current logged in user
+func (a *App) currentUser(r *http.Request) (User, error) {
+	userID, err := sookie.Get[string](a.Config.CookieSecret, r, a.authCookieName)
+	if err != nil {
+		return User{}, serr.Wrap(err)
+	}
+	return a.Users.ByID(userID)
 }
 
-func (a *App) inviteUser(r *http.Request) (User, error) {
-	invite, found := (*a.invites.Load())[r.PathValue("invite")]
+// returns the user from the invite
+func (a *App) inviteUser(r *http.Request) (string, User, error) {
+	inviteID := r.PathValue("invite")
+	invite, found := (*a.invites.Load())[inviteID]
 	if !found || invite.expired() {
-		return User{}, httpError(func(w http.ResponseWriter, r *http.Request) {
+		return "", User{}, httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			a.pageError(w, r, g.Text("No valid invite found.")).Render(w)
 		})
 	}
-	user, found := a.Users.ByID(invite.UserID)
-	if !found {
-		return User{}, serr.Errorf("invalid user id in invite: %s", invite.UserID)
+	user, err := a.Users.ByID(invite.UserID)
+	if err != nil {
+		return "", User{}, err
 	}
-	return user, nil
+	return inviteID, user, nil
 }
 
-func (a *App) registerBegin(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.inviteUser(r)
+func (a *App) inviteGet(w http.ResponseWriter, r *http.Request) error {
+	user, err := a.currentUser(r)
+	if err != nil {
+		return err
+	}
+
+	if !slices.Contains(user.Tags, "admin") {
+		return serr.Errorf("only admins can create invites")
+	}
+
+	// TODO render create invite ui
+
+	return nil
+}
+
+func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
+	user, err := a.currentUser(r)
+	if err != nil {
+		return err
+	}
+
+	if !slices.Contains(user.Tags, "admin") {
+		return serr.Errorf("only admins can create invites")
+	}
+
+	// TODO render qr code and share invite ui
+
+	return nil
+}
+
+func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
+	_, user, err := a.inviteUser(r)
 	if err != nil {
 		return err
 	}
@@ -175,28 +243,28 @@ func (a *App) registerBegin(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	sookie.Set(a.Config.Secret, w, sessionData, a.registerCookie())
+	sookie.Set(a.Config.CookieSecret, w, sessionData, a.registerCookie())
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(options)
 	return nil
 }
 
-const kCredential = "credential"
+const inputCredential = "credential"
 
-func (a *App) registerFinish(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.inviteUser(r)
+func (a *App) registerPost(w http.ResponseWriter, r *http.Request) error {
+	inviteID, user, err := a.inviteUser(r)
 	if err != nil {
 		return err
 	}
 
 	sessionData, err := sookie.Get[webauthn.SessionData](
-		a.Config.Secret, r, a.registerCookie().Name)
+		a.Config.CookieSecret, r, a.registerCookieName)
 	if err != nil {
 		return serr.Wrap(err)
 	}
 
 	parsedResponse, err := protocol.ParseCredentialCreationResponseBody(
-		strings.NewReader(r.FormValue(kCredential)),
+		strings.NewReader(r.FormValue(inputCredential)),
 	)
 	if err != nil {
 		return serr.Wrap(err)
@@ -212,28 +280,33 @@ func (a *App) registerFinish(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
+	// TODO delete invite
+	// TODO sign in new user
+	// TODO redirect somewhere?
+
 	return nil
 }
 
-func (a *App) loginBegin(w http.ResponseWriter, r *http.Request) error {
+func (a *App) loginGet(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (a *App) loginFinish(w http.ResponseWriter, r *http.Request) error {
+func (a *App) loginPost(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-func (a *App) logout(w http.ResponseWriter, r *http.Request) error {
+func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
+	sookie.Del(w, r, a.authCookie())
 	return nil
 }
 
 func (a *App) mux() *http.ServeMux {
 	var m http.ServeMux
-	m.Handle("GET register", a.wrap(a.registerBegin))
-	m.Handle("POST register", a.wrap(a.registerFinish))
-	m.Handle("GET login", a.wrap(a.loginBegin))
-	m.Handle("POST login", a.wrap(a.loginFinish))
-	m.Handle("POST logout", a.wrap(a.logout))
+	m.Handle("GET register", a.wrap(a.registerGet))
+	m.Handle("POST register", a.wrap(a.registerPost))
+	m.Handle("GET login", a.wrap(a.loginGet))
+	m.Handle("POST login", a.wrap(a.loginPost))
+	m.Handle("POST logout", a.wrap(a.logoutPost))
 	return &m
 }
 
