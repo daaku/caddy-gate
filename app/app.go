@@ -133,9 +133,14 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	if c.AuthCookieTTL == 0 {
 		c.AuthCookieTTL = time.Hour * 24 * 30
 	}
+	if c.CookieNamePrefix == "" {
+		c.CookieNamePrefix = "gate-"
+	}
 	return &App{
-		Config:   c,
-		WebAuthN: webauthn,
+		Config:             c,
+		WebAuthN:           webauthn,
+		authCookieName:     c.CookieNamePrefix + "a",
+		registerCookieName: c.CookieNamePrefix + "r",
 	}, nil
 }
 
