@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"maps"
 	"net/http"
 	"os"
@@ -124,7 +125,9 @@ type App struct {
 
 	invites            atomic.Pointer[map[string]invite]
 	registerCookieName string
+	loginCookieName    string
 	authCookieName     string
+	handler            http.HandlerFunc
 }
 
 func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
@@ -140,17 +143,32 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	if c.CookieNamePrefix == "" {
 		c.CookieNamePrefix = "gate-"
 	}
-	return &App{
+	a := &App{
 		Config:             c,
 		WebAuthN:           webauthn,
-		authCookieName:     c.CookieNamePrefix + "a",
 		registerCookieName: c.CookieNamePrefix + "r",
-	}, nil
+		loginCookieName:    c.CookieNamePrefix + "l",
+		authCookieName:     c.CookieNamePrefix + "a",
+	}
+	m := http.NewCrossOriginProtection().Handler(a.mux())
+	a.handler = m.ServeHTTP
+	return a, nil
 }
 
 func (a *App) registerCookie() http.Cookie {
 	return http.Cookie{
 		Name:     a.registerCookieName,
+		Path:     a.Config.CookiePath,
+		Domain:   a.Config.CookieDomain,
+		MaxAge:   maxAge(time.Minute * 10),
+		Secure:   true,
+		HttpOnly: true,
+	}
+}
+
+func (a *App) loginCookie() http.Cookie {
+	return http.Cookie{
+		Name:     a.loginCookieName,
 		Path:     a.Config.CookiePath,
 		Domain:   a.Config.CookieDomain,
 		MaxAge:   maxAge(time.Minute * 10),
@@ -199,7 +217,7 @@ func (a *App) inviteUser(r *http.Request) (string, User, error) {
 	if !found || invite.expired() {
 		return "", User{}, httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
-			a.pageError(w, r, g.Text("No valid invite found.")).Render(w)
+			a.pageError(g.Text("No valid invite found.")).Render(w)
 		})
 	}
 	user, err := a.Users.ByID(invite.UserID)
@@ -303,11 +321,45 @@ func (a *App) registerPost(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) loginGet(w http.ResponseWriter, r *http.Request) error {
+	credentialAssertion, sessionData, err := a.WebAuthN.BeginDiscoverableLogin()
+	if err != nil {
+		return serr.Wrap(err)
+	}
+	if err := sookie.Set(a.Config.CookieSecret, w, sessionData, a.loginCookie()); err != nil {
+		return serr.Wrap(err)
+	}
+	// TODO render login page
+	json.NewEncoder(w).Encode(credentialAssertion)
 	return nil
 }
 
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) error {
+	sessionData, err := sookie.Get[*webauthn.SessionData](
+		a.Config.CookieSecret, r, a.loginCookieName)
+	if err != nil {
+		return serr.Wrap(err)
+	}
+
+	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(r.Body)
+	if err != nil {
+		return serr.Wrap(err)
+	}
+
+	credential, err := a.WebAuthN.ValidateDiscoverableLogin(a.discoverUser, *sessionData, parsedResponse)
+	if err != nil {
+		return serr.Wrap(err)
+	}
+
+	log.Printf("%+v\n", credential)
+
+	// TODO: what user do we have?
+
 	return nil
+}
+
+func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
+	log.Printf("discoverUser: %s %s", rawID, userHandle)
+	return nil, nil
 }
 
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
@@ -347,11 +399,11 @@ func (a *App) pageShell(title string, body g.Node) g.Node {
 			body))
 }
 
-func (a *App) pageStd(w http.ResponseWriter, r *http.Request, title string, body g.Node) g.Node {
+func (a *App) pageStd(title string, body g.Node) g.Node {
 	return a.pageShell(title,
 		h.Body(h.Main(h.Class("container"), body)))
 }
 
-func (a *App) pageError(w http.ResponseWriter, r *http.Request, body g.Node) g.Node {
-	return a.pageStd(w, r, "Error", body)
+func (a *App) pageError(body g.Node) g.Node {
+	return a.pageStd("Error", body)
 }
