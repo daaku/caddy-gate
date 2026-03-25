@@ -38,6 +38,7 @@ func maxAge(d time.Duration) int {
 }
 
 type Config struct {
+	UsersFile        string
 	CookieSecret     []byte
 	CookieDomain     string
 	CookiePath       string
@@ -47,10 +48,10 @@ type Config struct {
 
 // User implements webauthn.User.
 type User struct {
-	ID          string
-	DisplayName string
-	Tags        []string
-	Credentials []webauthn.Credential
+	ID          string                `json:"id"`
+	DisplayName string                `json:"displayName"`
+	Tags        []string              `json:"tags"`
+	Credentials []webauthn.Credential `json:"credentials"`
 }
 
 func (u User) WebAuthnID() []byte                         { return []byte(u.ID) }
@@ -97,6 +98,20 @@ func (s *Store) ByID(userID string) (User, error) {
 	return user, nil
 }
 
+func NewStore(filename string) (*Store, error) {
+	jsonB, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, serr.Wrap(err)
+	}
+	users := map[string]User{}
+	if err := json.Unmarshal(jsonB, &users); err != nil {
+		return nil, serr.Wrap(err)
+	}
+	s := Store{Path: filename}
+	s.Users.Store(&users)
+	return &s, nil
+}
+
 type invite struct {
 	UserID    string
 	ExpiresAt time.Time
@@ -121,7 +136,7 @@ func mutateMap[T any](m *atomic.Pointer[map[string]T], f func(map[string]T)) {
 type App struct {
 	Config   Config
 	WebAuthN *webauthn.WebAuthn
-	Users    Store
+	Users    *Store
 
 	invites            atomic.Pointer[map[string]invite]
 	registerCookieName string
@@ -143,13 +158,22 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	if c.CookieNamePrefix == "" {
 		c.CookieNamePrefix = "gate-"
 	}
+	if c.UsersFile == "" {
+		return nil, serr.Errorf("must specify UsersFile in config")
+	}
+	store, err := NewStore(c.UsersFile)
+	if err != nil {
+		return nil, err
+	}
 	a := &App{
 		Config:             c,
 		WebAuthN:           webauthn,
+		Users:              store,
 		registerCookieName: c.CookieNamePrefix + "r",
 		loginCookieName:    c.CookieNamePrefix + "l",
 		authCookieName:     c.CookieNamePrefix + "a",
 	}
+	a.invites.Store(&map[string]invite{})
 	m := http.NewCrossOriginProtection().Handler(a.mux())
 	a.handler = m.ServeHTTP
 	return a, nil

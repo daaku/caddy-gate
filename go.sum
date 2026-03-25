@@ -19,6 +19,8 @@ github.com/cpuguy83/go-md2man/v2 v2.0.7 h1:zbFlGlXEAKlwXpmvle3d8Oe3YnkKIK4xSRTd3
 github.com/cpuguy83/go-md2man/v2 v2.0.7/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/daaku/ensure v1.0.1 h1:nnbJcD3PSxo6Jm7p8ODuw9WdMCHceF+z4fs+xCbj+PU=
 github.com/daaku/ensure v1.0.1/go.mod h1:DtAAnvKyntGyC/wijZKtC48R79j6YDoePh1/idKgDwc=
+github.com/daaku/lands v1.1.0 h1:2vK2IczVp4wG08jdJQYzyeIfcqWveNcWbOmYscALMmM=
+github.com/daaku/lands v1.1.0/go.mod h1:/IhWphj5Ma3QSUzg4HJ85ENfLpCA+MqoNuAop2mfTwY=
 github.com/daaku/serr v1.0.0 h1:LqUpkrQAACu6YHW9w3OMn3uQr2J+a1cdeyV/3HgptDs=
 github.com/daaku/serr v1.0.0/go.mod h1:VhjoETLRib15Tyd076UDQnVo9ozjnbMpoFlCTvwCEj0=
 github.com/daaku/sookie v0.5.0 h1:F5TxgMBo1eeYuKgngHFhAd3wXuxUZw7z1rEak/CKnYE=
