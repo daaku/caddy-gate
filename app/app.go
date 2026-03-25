@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"slices"
@@ -99,14 +100,12 @@ func (i *invite) expired() bool {
 	return i.ExpiresAt.After(time.Now())
 }
 
-func mapSet[T any](m *atomic.Pointer[map[string]T], k string, v T) {
+func mutateMap[T any](m *atomic.Pointer[map[string]T], f func(map[string]T)) {
 	for {
 		e := m.Load()
 		eNew := make(map[string]T, len(*e))
-		for k, v := range *e {
-			eNew[k] = v
-		}
-		eNew[k] = v
+		maps.Copy(eNew, *e)
+		f(eNew)
 		if m.CompareAndSwap(e, &eNew) {
 			return
 		}
@@ -285,8 +284,14 @@ func (a *App) registerPost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	// TODO delete invite
-	// TODO sign in new user
+	mutateMap(&a.invites, func(m map[string]invite) {
+		delete(m, inviteID)
+	})
+
+	if err := sookie.Set(a.Config.CookieSecret, w, user.ID, a.authCookie()); err != nil {
+		return serr.Wrap(err)
+	}
+
 	// TODO redirect somewhere?
 
 	return nil
@@ -307,11 +312,13 @@ func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) mux() *http.ServeMux {
 	var m http.ServeMux
-	m.Handle("GET register", a.wrap(a.registerGet))
-	m.Handle("POST register", a.wrap(a.registerPost))
-	m.Handle("GET login", a.wrap(a.loginGet))
-	m.Handle("POST login", a.wrap(a.loginPost))
-	m.Handle("POST logout", a.wrap(a.logoutPost))
+	m.Handle("GET /invite", a.wrap(a.inviteGet))
+	m.Handle("POST /invite", a.wrap(a.invitePost))
+	m.Handle("GET /register/{invite}", a.wrap(a.registerGet))
+	m.Handle("POST /register/{invite}", a.wrap(a.registerPost))
+	m.Handle("GET /login", a.wrap(a.loginGet))
+	m.Handle("POST /login", a.wrap(a.loginPost))
+	m.Handle("POST /logout", a.wrap(a.logoutPost))
 	return &m
 }
 
