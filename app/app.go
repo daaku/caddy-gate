@@ -11,13 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"maps"
 	"net/http"
 	"os"
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/daaku/serr"
@@ -61,24 +59,34 @@ func (u User) WebAuthnName() string                       { return u.DisplayName
 func (u User) WebAuthnDisplayName() string                { return u.DisplayName }
 func (u User) WebAuthnCredentials() []webauthn.Credential { return u.Credentials }
 
+var ErrUserNotFound = errors.New("user not found")
+
 type userStore struct {
 	path  string
-	lock  sync.Mutex
-	users atomic.Pointer[map[string]User]
+	lock  sync.RWMutex
+	users []User
 }
 
-func (s *userStore) Save(userID string, credential *webauthn.Credential) error {
+func (s *userStore) internalByID(userID string) (*User, error) {
+	i := slices.IndexFunc(s.users, func(u User) bool {
+		return u.ID == userID
+	})
+	if i == -1 {
+		return nil, serr.Wrap(ErrUserNotFound)
+	}
+	return &s.users[i], nil
+}
+
+func (s *userStore) RegisterCredential(userID string, credential *webauthn.Credential) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-
-	e := *s.users.Load()
-	eNew := make(map[string]User, len(e))
-	maps.Copy(eNew, e)
-	u := eNew[userID]
+	u, err := s.internalByID(userID)
+	if err != nil {
+		return err
+	}
 	u.Credentials = append(u.Credentials, *credential)
-	eNew[userID] = u
 
-	jsonB, err := json.MarshalIndent(eNew, "", "  ")
+	jsonB, err := json.MarshalIndent(s.users, "", "  ")
 	if err != nil {
 		return serr.Wrap(err)
 	}
@@ -86,53 +94,60 @@ func (s *userStore) Save(userID string, credential *webauthn.Credential) error {
 	if err := atomicfile.WriteFile(s.path, bytes.NewReader(jsonB)); err != nil {
 		return serr.Wrap(err)
 	}
-	s.users.Store(&eNew)
 	return nil
 }
 
-var ErrUserNotFound = errors.New("user not found")
-
-func (s *userStore) ByID(userID string) (User, error) {
-	user, found := (*s.users.Load())[userID]
-	if !found {
-		return User{}, serr.Wrap(ErrUserNotFound)
-	}
-	return user, nil
+func (s *userStore) ByID(userID string) (*User, error) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	return s.internalByID(userID)
 }
 
-func NewStore(filename string) (*userStore, error) {
-	jsonB, err := os.ReadFile(filename)
+func (s *userStore) FirstAdmin() *User {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+	i := slices.IndexFunc(s.users, func(u User) bool {
+		return slices.Contains(u.Tags, tagAdmin)
+	})
+	if i == -1 {
+		return nil
+	}
+	return &s.users[i]
+}
+
+const tagAdmin = "admin"
+
+func (s *userStore) Validate() error {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
+
+	if len(s.users) == 0 {
+		return serr.Errorf("at least one user must be defined in %q", s.path)
+	}
+
+	validAdmins := slices.ContainsFunc(s.users, func(u User) bool {
+		return slices.Contains(u.Tags, tagAdmin) && len(u.Credentials) > 0
+	})
+	if !validAdmins {
+		return serr.Errorf("no admin user with credentials in %q", s.path)
+	}
+
+	return nil
+}
+
+func (s *userStore) Reload() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	jsonB, err := os.ReadFile(s.path)
 	if err != nil {
-		return nil, serr.Wrap(err)
+		return serr.Wrap(err)
 	}
-	users := map[string]User{}
+	var users []User
 	if err := json.Unmarshal(jsonB, &users); err != nil {
-		return nil, serr.Wrap(err)
+		return serr.Wrap(err)
 	}
-	if len(users) == 0 {
-		return nil, serr.Errorf("at least one user must be defined in %q", filename)
-	}
-
-	var adminUserID string
-	var foundAdminCredentials bool
-	for _, u := range users {
-		if slices.Contains(u.Tags, "admin") {
-			if len(u.Credentials) > 0 {
-				foundAdminCredentials = true
-			}
-			adminUserID = u.ID
-		}
-	}
-
-	if adminUserID == "" {
-		return nil, serr.Errorf("at least one admin user must be defined in %q", filename)
-	}
-	if !foundAdminCredentials {
-	}
-
-	s := userStore{path: filename}
-	s.users.Store(&users)
-	return &s, nil
+	s.users = users
+	return nil
 }
 
 type invite struct {
@@ -145,18 +160,6 @@ func (i *invite) expired() bool {
 	return i.ExpiresAt.After(time.Now())
 }
 
-func mutateMap[T any](m *atomic.Pointer[map[string]T], f func(map[string]T)) {
-	for {
-		e := m.Load()
-		eNew := make(map[string]T, len(*e))
-		maps.Copy(eNew, *e)
-		f(eNew)
-		if m.CompareAndSwap(e, &eNew) {
-			return
-		}
-	}
-}
-
 func genRandomID() string {
 	var id [16]byte
 	rand.Read(id[:])
@@ -164,7 +167,7 @@ func genRandomID() string {
 }
 
 type inviteStore struct {
-	invites []*invite
+	invites map[string]*invite
 	lock    sync.RWMutex
 }
 
@@ -173,13 +176,11 @@ var errInviteNotFound = errors.New("invite not found")
 func (s *inviteStore) Get(inviteID string) (*invite, error) {
 	s.lock.RLock()
 	defer s.lock.RUnlock()
-	i := slices.IndexFunc(s.invites, func(i *invite) bool {
-		return i.ID == inviteID
-	})
-	if i == -1 {
+	i, found := s.invites[inviteID]
+	if !found {
 		return nil, serr.Errorf("%w %q", errInviteNotFound, inviteID)
 	}
-	return s.invites[i], nil
+	return i, nil
 }
 
 func (s *inviteStore) Create(i *invite) error {
@@ -191,24 +192,28 @@ func (s *inviteStore) Create(i *invite) error {
 	if i.ExpiresAt.IsZero() {
 		i.ExpiresAt = time.Now().Add(time.Minute * 10)
 	}
-	s.invites = append(s.invites, i)
+	if _, found := s.invites[i.ID]; found {
+		return serr.Errorf("invite with id %q already exists", i.ID)
+	}
+	if s.invites == nil {
+		s.invites = map[string]*invite{}
+	}
+	s.invites[i.ID] = i
 	return nil
 }
 
 func (s *inviteStore) Delete(inviteID string) error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
-	s.invites = slices.DeleteFunc(s.invites, func(i *invite) bool {
-		return i.ID == inviteID
-	})
+	delete(s.invites, inviteID)
 	return nil
 }
 
 type App struct {
 	Config   Config
 	WebAuthN *webauthn.WebAuthn
-	Users    *userStore
 
+	users              userStore
 	invites            inviteStore
 	registerCookieName string
 	loginCookieName    string
@@ -232,20 +237,35 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	if c.UsersFile == "" {
 		return nil, serr.Errorf("must specify UsersFile in config")
 	}
-	store, err := NewStore(c.UsersFile)
-	if err != nil {
-		return nil, err
-	}
+
 	a := &App{
 		Config:             c,
 		WebAuthN:           webauthn,
-		Users:              store,
 		registerCookieName: c.CookieNamePrefix + "r",
 		loginCookieName:    c.CookieNamePrefix + "l",
 		authCookieName:     c.CookieNamePrefix + "a",
 	}
+
+	a.users.path = c.UsersFile
+	if err := a.users.Reload(); err != nil {
+		return nil, err
+	}
+
+	if err := a.users.Validate(); err != nil {
+		if firstAdmin := a.users.FirstAdmin(); firstAdmin != nil {
+			i := invite{UserID: firstAdmin.ID}
+			if err := a.invites.Create(&i); err != nil {
+				return nil, err
+			}
+			log.Printf("Created initial invite: %s", i.ID)
+		} else {
+			return nil, err
+		}
+	}
+
 	m := http.NewCrossOriginProtection().Handler(a.mux())
 	a.handler = m.ServeHTTP
+
 	return a, nil
 }
 
@@ -296,30 +316,30 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 }
 
 // returns the current logged in user
-func (a *App) currentUser(r *http.Request) (User, error) {
+func (a *App) currentUser(r *http.Request) (*User, error) {
 	userID, err := sookie.Get[string](a.Config.CookieSecret, r, a.authCookieName)
 	if err != nil {
-		return User{}, serr.Wrap(err)
+		return nil, serr.Wrap(err)
 	}
-	return a.Users.ByID(userID)
+	return a.users.ByID(userID)
 }
 
 // returns the user from the invite
-func (a *App) inviteUser(r *http.Request) (string, User, error) {
+func (a *App) inviteUser(r *http.Request) (string, *User, error) {
 	inviteID := r.PathValue("invite")
 	invite, err := a.invites.Get(inviteID)
 	if errors.Is(err, errInviteNotFound) || invite != nil && invite.expired() {
-		return "", User{}, httpError(func(w http.ResponseWriter, r *http.Request) {
+		return "", nil, httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			a.pageError(g.Text("No valid invite found.")).Render(w)
 		})
 	}
 	if err != nil {
-		return "", User{}, err
+		return "", nil, err
 	}
-	user, err := a.Users.ByID(invite.UserID)
+	user, err := a.users.ByID(invite.UserID)
 	if err != nil {
-		return "", User{}, err
+		return "", nil, err
 	}
 	return inviteID, user, nil
 }
@@ -330,7 +350,7 @@ func (a *App) inviteGet(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if !slices.Contains(user.Tags, "admin") {
+	if !slices.Contains(user.Tags, tagAdmin) {
 		return serr.Errorf("only admins can create invites")
 	}
 
@@ -347,7 +367,7 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if !slices.Contains(user.Tags, "admin") {
+	if !slices.Contains(user.Tags, tagAdmin) {
 		return serr.Errorf("only admins can create invites")
 	}
 
@@ -407,7 +427,7 @@ func (a *App) registerPost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	if err := a.Users.Save(user.ID, credential); err != nil {
+	if err := a.users.RegisterCredential(user.ID, credential); err != nil {
 		return err
 	}
 
