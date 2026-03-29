@@ -409,7 +409,6 @@ func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
 			h.H1(g.Textf("Add Credential for %s", user.DisplayName)),
 			h.Pre(g.Text(string(jsonB))),
 		}).Render(w)
-	w.Header().Set("Content-Type", "application/json")
 	return nil
 }
 
@@ -533,6 +532,9 @@ var appJS string
 //go:embed app.css
 var appCSS string
 
+//go:embed icon-error.svg
+var iconError string
+
 func (a *App) pageShell(title string, body g.Node) g.Node {
 	return h.Doctype(
 		h.HTML(h.Lang("en"),
@@ -549,5 +551,9 @@ func (a *App) pageStd(title string, body g.Node) g.Node {
 }
 
 func (a *App) pageError(body g.Node) g.Node {
-	return a.pageStd("Error", body)
+	return a.pageStd("Error",
+		h.Div(h.Class("error"),
+			h.SVG(g.Attr("viewBox", "0 0 24 24"), g.Raw(iconError)),
+			h.Div(body),
+		))
 }
