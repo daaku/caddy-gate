@@ -334,7 +334,7 @@ func (a *App) inviteUser(r *http.Request) (string, *User, error) {
 	if errors.Is(err, errInviteNotFound) || invite != nil && invite.expired() {
 		return "", nil, httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
-			a.pageError(g.Text("No valid invite found.")).Render(w)
+			a.pageError("Not Found", g.Text("No valid invite found.")).Render(w)
 		})
 	}
 	if err != nil {
@@ -505,7 +505,7 @@ func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) notFound(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(http.StatusNotFound)
-	a.pageError(g.Text("Not Found")).Render(w)
+	a.pageError("Not Found", g.Text("Not Found")).Render(w)
 	return nil
 }
 
@@ -550,8 +550,8 @@ func (a *App) pageStd(title string, body g.Node) g.Node {
 	return a.pageShell(title, h.Body(h.Main(body)))
 }
 
-func (a *App) pageError(body g.Node) g.Node {
-	return a.pageStd("Error",
+func (a *App) pageError(title string, body g.Node) g.Node {
+	return a.pageStd(title,
 		h.Div(h.Class("error"),
 			h.SVG(g.Attr("viewBox", "0 0 24 24"), g.Raw(iconError)),
 			h.Div(body),

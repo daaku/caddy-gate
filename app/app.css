@@ -13,17 +13,17 @@ body {
 
   display: grid;
   place-items: center;
-  height: 100vh;
+  margin-top: 5rem;
 }
 
 .error {
   display: grid;
   place-items: center;
+  gap: 1rem;
 
   svg {
     width: 64px;
     height: 64px;
     fill: none;
-    margin-bottom: 1rem;
   }
 }
