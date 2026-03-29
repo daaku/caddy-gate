@@ -399,8 +399,17 @@ func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
 
 	sookie.Set(a.Config.CookieSecret, w, sessionData, a.registerCookie())
 
+	jsonB, err := json.MarshalIndent(options, "", "  ")
+	if err != nil {
+		return serr.Wrap(err)
+	}
+
+	a.pageStd("Add Credential",
+		g.Group{
+			h.H1(g.Textf("Add Credential for %s", user.DisplayName)),
+			h.Pre(g.Text(string(jsonB))),
+		}).Render(w)
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(options)
 	return nil
 }
 
@@ -536,8 +545,7 @@ func (a *App) pageShell(title string, body g.Node) g.Node {
 }
 
 func (a *App) pageStd(title string, body g.Node) g.Node {
-	return a.pageShell(title,
-		h.Body(h.Main(h.Class("container"), body)))
+	return a.pageShell(title, h.Body(h.Main(body)))
 }
 
 func (a *App) pageError(body g.Node) g.Node {

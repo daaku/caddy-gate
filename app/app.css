@@ -5,3 +5,15 @@ html {
 *, *:before, *:after {
   box-sizing: inherit;
 }
+
+body {
+  font-family:
+    ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+
+  display: grid;
+  place-items: center;
+  height: 100vh;
+}
+
+main {}
