@@ -20,12 +20,15 @@ import (
 
 	"github.com/daaku/serr"
 	"github.com/daaku/sookie"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	atomicfile "github.com/natefinch/atomic"
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
 )
+
+var dump = spew.Dump
 
 type httpError http.HandlerFunc
 
@@ -157,7 +160,7 @@ type invite struct {
 }
 
 func (i *invite) expired() bool {
-	return i.ExpiresAt.After(time.Now())
+	return i.ExpiresAt.Before(time.Now())
 }
 
 func genRandomID() string {
@@ -355,7 +358,7 @@ func (a *App) inviteGet(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// TODO render create invite ui
-
+	a.pageStd("Create Invite", g.Text("Create Invite")).Render(w)
 	return nil
 }
 
@@ -377,7 +380,7 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// TODO render qr code and share invite ui
-
+	a.pageStd("Invite Created", g.Textf("Invite Created: %+v", i)).Render(w)
 	return nil
 }
 
@@ -395,6 +398,7 @@ func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	sookie.Set(a.Config.CookieSecret, w, sessionData, a.registerCookie())
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(options)
 	return nil
@@ -491,6 +495,12 @@ func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (a *App) notFound(w http.ResponseWriter, r *http.Request) error {
+	w.WriteHeader(http.StatusNotFound)
+	a.pageError(g.Text("Not Found")).Render(w)
+	return nil
+}
+
 func (a *App) mux() *http.ServeMux {
 	var m http.ServeMux
 	m.Handle("GET /invite", a.wrap(a.inviteGet))
@@ -500,10 +510,12 @@ func (a *App) mux() *http.ServeMux {
 	m.Handle("GET /login", a.wrap(a.loginGet))
 	m.Handle("POST /login", a.wrap(a.loginPost))
 	m.Handle("POST /logout", a.wrap(a.logoutPost))
+	m.Handle("GET /", a.wrap(a.notFound))
 	return &m
 }
 
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.handler(w, r)
 }
 
 //go:embed app.js
@@ -518,7 +530,7 @@ func (a *App) pageShell(title string, body g.Node) g.Node {
 			h.Head(h.Meta(h.Charset("utf-8")),
 				h.Meta(h.Name("viewport"), h.Content("width=device-width, initial-scale=1")),
 				h.TitleEl(g.Text(title)),
-				h.Style(appCSS),
+				h.StyleEl(g.Raw(appCSS)),
 				h.Script(g.Raw(appJS))),
 			body))
 }

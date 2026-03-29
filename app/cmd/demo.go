@@ -25,6 +25,7 @@ func run(ctx context.Context) error {
 		CookieSecret: must(base64.RawURLEncoding.DecodeString(os.Getenv("COOKIE_SECRET"))),
 	}
 	wa, err := webauthn.New(&webauthn.Config{
+		RPID:          "localhost",
 		RPDisplayName: "Caddy Gate Demo",
 		RPOrigins:     []string{"localhost"},
 	})
