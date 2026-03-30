@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/daaku/serr"
@@ -28,7 +29,10 @@ import (
 	h "maragu.dev/gomponents/html"
 )
 
-var dump = spew.Dump
+var (
+	dump = spew.Dump
+	_    = dump
+)
 
 type httpError http.HandlerFunc
 
@@ -52,14 +56,14 @@ type Config struct {
 // User implements webauthn.User.
 type User struct {
 	ID          string                `json:"id"`
-	DisplayName string                `json:"displayName"`
+	Name        string                `json:"name"`
 	Tags        []string              `json:"tags"`
 	Credentials []webauthn.Credential `json:"credentials"`
 }
 
 func (u User) WebAuthnID() []byte                         { return []byte(u.ID) }
-func (u User) WebAuthnName() string                       { return u.DisplayName }
-func (u User) WebAuthnDisplayName() string                { return u.DisplayName }
+func (u User) WebAuthnName() string                       { return u.Name }
+func (u User) WebAuthnDisplayName() string                { return u.Name }
 func (u User) WebAuthnCredentials() []webauthn.Credential { return u.Credentials }
 
 var ErrUserNotFound = errors.New("user not found")
@@ -67,80 +71,71 @@ var ErrUserNotFound = errors.New("user not found")
 type userStore struct {
 	path  string
 	lock  sync.RWMutex
-	users []User
-}
-
-func (s *userStore) internalByID(userID string) (*User, error) {
-	i := slices.IndexFunc(s.users, func(u User) bool {
-		return u.ID == userID
-	})
-	if i == -1 {
-		return nil, serr.Wrap(ErrUserNotFound)
-	}
-	return &s.users[i], nil
+	users atomic.Pointer[[]User]
 }
 
 func (s *userStore) RegisterCredential(userID string, credential *webauthn.Credential) error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	u, err := s.internalByID(userID)
-	if err != nil {
-		return err
-	}
-	u.Credentials = append(u.Credentials, *credential)
+	for {
+		users := s.users.Load()
+		usersCopy := slices.Clone(*users)
+		for i, u := range usersCopy {
+			if u.ID == userID {
+				usersCopy[i].Credentials = append(slices.Clone(u.Credentials), *credential)
+			}
+		}
+		if !s.users.CompareAndSwap(users, &usersCopy) {
+			continue // try again
+		}
 
-	jsonB, err := json.MarshalIndent(s.users, "", "  ")
-	if err != nil {
-		return serr.Wrap(err)
-	}
+		jsonB, err := json.MarshalIndent(usersCopy, "", "  ")
+		if err != nil {
+			return serr.Wrap(err)
+		}
 
-	if err := atomicfile.WriteFile(s.path, bytes.NewReader(jsonB)); err != nil {
-		return serr.Wrap(err)
+		if err := atomicfile.WriteFile(s.path, bytes.NewReader(jsonB)); err != nil {
+			return serr.Wrap(err)
+		}
+		return nil
 	}
-	return nil
 }
 
 func (s *userStore) ByID(userID string) (*User, error) {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-	return s.internalByID(userID)
+	users := s.users.Load()
+	for _, u := range *users {
+		if u.ID == userID {
+			return &u, nil
+		}
+	}
+	return nil, serr.Wrap(ErrUserNotFound)
 }
 
 func (s *userStore) FirstAdmin() *User {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-	i := slices.IndexFunc(s.users, func(u User) bool {
-		return slices.Contains(u.Tags, tagAdmin)
-	})
-	if i == -1 {
-		return nil
+	users := s.users.Load()
+	for _, u := range *users {
+		if slices.Contains(u.Tags, tagAdmin) {
+			return &u
+		}
 	}
-	return &s.users[i]
+	return nil
 }
 
 const tagAdmin = "admin"
 
 func (s *userStore) Validate() error {
-	s.lock.RLock()
-	defer s.lock.RUnlock()
-
-	if len(s.users) == 0 {
+	users := s.users.Load()
+	if len(*users) == 0 {
 		return serr.Errorf("at least one user must be defined in %q", s.path)
 	}
-
-	validAdmins := slices.ContainsFunc(s.users, func(u User) bool {
+	validAdmins := slices.ContainsFunc(*users, func(u User) bool {
 		return slices.Contains(u.Tags, tagAdmin) && len(u.Credentials) > 0
 	})
 	if !validAdmins {
 		return serr.Errorf("no admin user with credentials in %q", s.path)
 	}
-
 	return nil
 }
 
 func (s *userStore) Reload() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
 	jsonB, err := os.ReadFile(s.path)
 	if err != nil {
 		return serr.Wrap(err)
@@ -149,7 +144,7 @@ func (s *userStore) Reload() error {
 	if err := json.Unmarshal(jsonB, &users); err != nil {
 		return serr.Wrap(err)
 	}
-	s.users = users
+	s.users.Store(&users)
 	return nil
 }
 
@@ -406,7 +401,7 @@ func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
 
 	a.pageStd("Add Credential",
 		g.Group{
-			h.H1(g.Textf("Add Credential for %s", user.DisplayName)),
+			h.H1(g.Textf("Add Credential for %s", user.Name)),
 			h.Pre(g.Text(string(jsonB))),
 		}).Render(w)
 	return nil
