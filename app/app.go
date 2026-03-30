@@ -515,7 +515,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// TODO redirect somewhere?
-	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 
 	return nil
 }
@@ -560,7 +560,7 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 	return nil
 }
 
@@ -576,7 +576,7 @@ func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
 
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 	sookie.Del(w, r, a.authCookie())
-	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 	return nil
 }
 
