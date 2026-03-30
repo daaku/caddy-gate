@@ -27,7 +27,7 @@ func run(ctx context.Context) error {
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          "localhost",
 		RPDisplayName: "Caddy Gate Demo",
-		RPOrigins:     []string{"localhost"},
+		RPOrigins:     []string{"https://localhost:8080"},
 	})
 	if err != nil {
 		return serr.Wrap(err)

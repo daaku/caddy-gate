@@ -379,7 +379,24 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+const pPkCreate = "/pk-create"
+
 func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
+	inviteID, user, err := a.inviteUser(r)
+	if err != nil {
+		return err
+	}
+
+	pkCreateURL := fmt.Sprintf("%s/%s", pPkCreate, inviteID)
+	a.pageStd("Add Credential",
+		g.Group{
+			h.H1(g.Textf("Add Credential for %s", user.Name)),
+			h.Button(h.Data("pk-create", pkCreateURL), g.Text("Register")),
+		}).Render(w)
+	return nil
+}
+
+func (a *App) pkCreateGet(w http.ResponseWriter, r *http.Request) error {
 	_, user, err := a.inviteUser(r)
 	if err != nil {
 		return err
@@ -393,23 +410,12 @@ func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	sookie.Set(a.Config.CookieSecret, w, sessionData, a.registerCookie())
-
-	jsonB, err := json.MarshalIndent(options, "", "  ")
-	if err != nil {
-		return serr.Wrap(err)
-	}
-
-	a.pageStd("Add Credential",
-		g.Group{
-			h.H1(g.Textf("Add Credential for %s", user.Name)),
-			h.Pre(g.Text(string(jsonB))),
-		}).Render(w)
-	return nil
+	return serr.Wrap(json.NewEncoder(w).Encode(options))
 }
 
-const inputCredential = "credential"
+const inputJSON = "json"
 
-func (a *App) registerPost(w http.ResponseWriter, r *http.Request) error {
+func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 	inviteID, user, err := a.inviteUser(r)
 	if err != nil {
 		return err
@@ -422,7 +428,7 @@ func (a *App) registerPost(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	parsedResponse, err := protocol.ParseCredentialCreationResponseBody(
-		strings.NewReader(r.FormValue(inputCredential)),
+		strings.NewReader(r.FormValue(inputJSON)),
 	)
 	if err != nil {
 		return serr.Wrap(err)
@@ -447,6 +453,7 @@ func (a *App) registerPost(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// TODO redirect somewhere?
+	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 
 	return nil
 }
@@ -498,6 +505,16 @@ func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (a *App) home(w http.ResponseWriter, r *http.Request) error {
+	user, err := a.currentUser(r)
+	if err != nil {
+		a.pageError("Not Signed In", h.Pre(g.Text(err.Error()))).Render(w)
+	} else {
+		a.pageStd("Signed In", h.H1(g.Textf("Welcome back, %s.", user.Name))).Render(w)
+	}
+	return nil
+}
+
 func (a *App) notFound(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(http.StatusNotFound)
 	a.pageError("Not Found", g.Text("Not Found")).Render(w)
@@ -509,11 +526,13 @@ func (a *App) mux() *http.ServeMux {
 	m.Handle("GET /invite", a.wrap(a.inviteGet))
 	m.Handle("POST /invite", a.wrap(a.invitePost))
 	m.Handle("GET /register/{invite}", a.wrap(a.registerGet))
-	m.Handle("POST /register/{invite}", a.wrap(a.registerPost))
+	m.Handle("GET "+pPkCreate+"/{invite}", a.wrap(a.pkCreateGet))
+	m.Handle("POST "+pPkCreate+"/{invite}", a.wrap(a.pkCreatePost))
 	m.Handle("GET /login", a.wrap(a.loginGet))
 	m.Handle("POST /login", a.wrap(a.loginPost))
 	m.Handle("POST /logout", a.wrap(a.logoutPost))
-	m.Handle("GET /", a.wrap(a.notFound))
+	m.Handle("GET /{$}", a.wrap(a.home))
+	m.Handle("/", a.wrap(a.notFound))
 	return &m
 }
 
@@ -533,16 +552,20 @@ var iconError string
 func (a *App) pageShell(title string, body g.Node) g.Node {
 	return h.Doctype(
 		h.HTML(h.Lang("en"),
-			h.Head(h.Meta(h.Charset("utf-8")),
+			h.Head(
+				h.Meta(h.Charset("utf-8")),
 				h.Meta(h.Name("viewport"), h.Content("width=device-width, initial-scale=1")),
 				h.TitleEl(g.Text(title)),
-				h.StyleEl(g.Raw(appCSS)),
-				h.Script(g.Raw(appJS))),
+				h.StyleEl(g.Raw(appCSS))),
 			body))
 }
 
 func (a *App) pageStd(title string, body g.Node) g.Node {
-	return a.pageShell(title, h.Body(h.Main(body)))
+	return a.pageShell(title,
+		h.Body(
+			h.Main(body),
+			h.Script(g.Raw(appJS)),
+		))
 }
 
 func (a *App) pageError(title string, body g.Node) g.Node {
