@@ -27,7 +27,7 @@ document.querySelectorAll('[data-pk-create]').forEach(el => {
 document.querySelectorAll('[data-pk-get]').forEach(el => {
   el.addEventListener('click', async () => {
     const url = el.dataset.pkGet
-    const publicKey = await (await fetch(url)).json()
+    const { publicKey } = await (await fetch(url)).json()
     publicKey.challenge = Uint8Array.fromBase64(publicKey.challenge, b64url)
     const getResponse = await navigator.credentials.get({ publicKey })
     jsonForm(url, getResponse)

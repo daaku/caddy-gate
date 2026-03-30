@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,7 +24,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	atomicfile "github.com/natefinch/atomic"
-	"github.com/wamuir/svg-qr-code"
+	qrsvg "github.com/wamuir/svg-qr-code"
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
 )
@@ -116,6 +115,17 @@ func (s *userStore) ByID(userID string) (*User, error) {
 	for _, u := range *users {
 		if u.ID == userID {
 			return &u, nil
+		}
+	}
+	return nil, serr.Wrap(ErrUserNotFound)
+}
+
+func (s *userStore) ByCredentialID(id []byte) (*User, error) {
+	for _, u := range s.All() {
+		for _, c := range u.Credentials {
+			if bytes.Equal(c.ID, id) {
+				return &u, nil
+			}
 		}
 	}
 	return nil, serr.Wrap(ErrUserNotFound)
@@ -479,8 +489,8 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	parsedResponse, err := protocol.ParseCredentialCreationResponseBody(
-		strings.NewReader(r.FormValue(inputJSON)),
+	parsedResponse, err := protocol.ParseCredentialCreationResponseBytes(
+		[]byte(r.FormValue(inputJSON)),
 	)
 	if err != nil {
 		return serr.Wrap(err)
@@ -510,6 +520,8 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+const pPkGet = "/pk-get"
+
 func (a *App) loginGet(w http.ResponseWriter, r *http.Request) error {
 	credentialAssertion, sessionData, err := a.WebAuthN.BeginDiscoverableLogin()
 	if err != nil {
@@ -518,9 +530,7 @@ func (a *App) loginGet(w http.ResponseWriter, r *http.Request) error {
 	if err := sookie.Set(a.Config.CookieSecret, w, sessionData, a.loginCookie()); err != nil {
 		return serr.Wrap(err)
 	}
-	// TODO render login page
-	json.NewEncoder(w).Encode(credentialAssertion)
-	return nil
+	return serr.Wrap(json.NewEncoder(w).Encode(credentialAssertion))
 }
 
 func (a *App) loginPost(w http.ResponseWriter, r *http.Request) error {
@@ -530,7 +540,8 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	parsedResponse, err := protocol.ParseCredentialRequestResponseBody(r.Body)
+	parsedResponse, err := protocol.ParseCredentialRequestResponseBytes(
+		[]byte(r.FormValue(inputJSON)))
 	if err != nil {
 		return serr.Wrap(err)
 	}
@@ -540,16 +551,27 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	log.Printf("%+v\n", credential)
+	user, err := a.users.ByCredentialID(credential.ID)
+	if err != nil {
+		return serr.Wrap(err)
+	}
 
-	// TODO: what user do we have?
+	if err := sookie.Set(a.Config.CookieSecret, w, user.ID, a.authCookie()); err != nil {
+		return serr.Wrap(err)
+	}
 
+	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 	return nil
 }
 
 func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
-	log.Printf("discoverUser: %s %s", rawID, userHandle)
-	return nil, nil
+	expectedID := string(userHandle)
+	for _, u := range a.users.All() {
+		if u.ID == expectedID {
+			return u, nil
+		}
+	}
+	return nil, serr.Errorf("unknown user with id %q", expectedID)
 }
 
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
@@ -557,8 +579,6 @@ func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 	return nil
 }
-
-const pPkGet = "/pk-get"
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 	user, err := a.currentUser(r)
@@ -595,8 +615,8 @@ func (a *App) mux() *http.ServeMux {
 	m.Handle("GET /register/{invite}", a.wrap(a.registerGet))
 	m.Handle("GET "+pPkCreate+"/{invite}", a.wrap(a.pkCreateGet))
 	m.Handle("POST "+pPkCreate+"/{invite}", a.wrap(a.pkCreatePost))
-	m.Handle("GET /login", a.wrap(a.loginGet))
-	m.Handle("POST /login", a.wrap(a.loginPost))
+	m.Handle("GET "+pPkGet, a.wrap(a.loginGet))
+	m.Handle("POST "+pPkGet, a.wrap(a.loginPost))
 	m.Handle("POST /logout", a.wrap(a.logoutPost))
 	m.Handle("GET /{$}", a.wrap(a.home))
 	m.Handle("/", a.wrap(a.notFound))
