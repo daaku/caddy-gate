@@ -226,6 +226,9 @@ type App struct {
 }
 
 func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
+	if c.UsersFile == "" {
+		return nil, serr.Errorf("must specify UsersFile in config")
+	}
 	if c.CookiePath == "" {
 		c.CookiePath = "/"
 	}
@@ -240,9 +243,6 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	}
 	if c.CookieNamePrefix == "" {
 		c.CookieNamePrefix = "gate-"
-	}
-	if c.UsersFile == "" {
-		return nil, serr.Errorf("must specify UsersFile in config")
 	}
 
 	a := &App{
