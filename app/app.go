@@ -394,8 +394,13 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// TODO render qr code and share invite ui
-	a.pageStd("Invite Created", g.Textf("Invite Created: %+v", i)).Render(w)
-	return nil
+	inviteURL := fmt.Sprintf("https://localhost:8080/invite/%s", i.ID)
+	return serr.Wrap(a.pageStd("Invite Created",
+		g.Group{
+			h.H1(g.Text("Invite Created")),
+			h.BlockQuote(h.Pre(h.A(h.Href(inviteURL), g.Text(inviteURL)))),
+		},
+	).Render(w))
 }
 
 const pPkCreate = "/pk-create"
@@ -582,7 +587,7 @@ func (a *App) pageShell(title string, body g.Node) g.Node {
 func (a *App) pageStd(title string, body g.Node) g.Node {
 	return a.pageShell(title,
 		h.Body(
-			h.Main(body),
+			body,
 			h.Script(g.Raw(appJS)),
 		))
 }
