@@ -10,6 +10,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1
 	github.com/go-webauthn/webauthn v0.16.1
 	github.com/natefinch/atomic v1.0.1
+	github.com/wamuir/svg-qr-code v0.0.0-20260330115617-db73789ab553
 	maragu.dev/gomponents v1.2.0
 )
 
@@ -43,6 +44,7 @@ require (
 	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/shamaton/msgpack/v2 v2.4.0 // indirect
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/x448/float16 v0.8.4 // indirect

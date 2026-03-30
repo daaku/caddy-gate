@@ -25,6 +25,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	atomicfile "github.com/natefinch/atomic"
+	"github.com/wamuir/svg-qr-code"
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
 )
@@ -394,11 +395,32 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	// TODO render qr code and share invite ui
-	inviteURL := fmt.Sprintf("https://localhost:8080/invite/%s", i.ID)
+	inviteURL := fmt.Sprintf("https://localhost:8080/register/%s", i.ID)
+	text := fmt.Sprintf("Register Passkey for %s", i.UserID)
+	shareJSON, err := json.Marshal(struct {
+		URL   string `json:"url"`
+		Title string `json:"title"`
+		Text  string `json:"text"`
+	}{
+		URL:   inviteURL,
+		Title: text,
+		Text:  text,
+	})
+	if err != nil {
+		return serr.Wrap(err)
+	}
+	svg, err := qrsvg.New(inviteURL)
+	if err != nil {
+		return serr.Wrap(err)
+	}
+	svg.Blocksize = 6
+	svg.Borderwidth = 2
 	return serr.Wrap(a.pageStd("Invite Created",
 		g.Group{
 			h.H1(g.Text("Invite Created")),
 			h.BlockQuote(h.Pre(h.A(h.Href(inviteURL), g.Text(inviteURL)))),
+			h.Button(h.Data("share", string(shareJSON)), g.Text("Share Invite")),
+			g.Raw(svg.String()),
 		},
 	).Render(w))
 }

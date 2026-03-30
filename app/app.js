@@ -33,3 +33,9 @@ document.querySelectorAll('[data-pk-get]').forEach(el => {
     jsonForm(url, getResponse)
   })
 })
+
+document.querySelectorAll('[data-share]').forEach(el => {
+  el.addEventListener('click', async () => {
+    window.share(JSON.parse(el.dataset.share))
+  })
+})
