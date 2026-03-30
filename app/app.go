@@ -50,6 +50,7 @@ type Config struct {
 	CookieDomain     string
 	CookiePath       string
 	CookieNamePrefix string
+	InviteTTL        time.Duration
 	AuthCookieTTL    time.Duration
 }
 
@@ -169,6 +170,7 @@ func genRandomID() string {
 }
 
 type inviteStore struct {
+	ttl     time.Duration
 	invites map[string]*invite
 	lock    sync.RWMutex
 }
@@ -192,7 +194,7 @@ func (s *inviteStore) Create(i *invite) error {
 		i.ID = genRandomID()
 	}
 	if i.ExpiresAt.IsZero() {
-		i.ExpiresAt = time.Now().Add(time.Minute * 10)
+		i.ExpiresAt = time.Now().Add(s.ttl)
 	}
 	if _, found := s.invites[i.ID]; found {
 		return serr.Errorf("invite with id %q already exists", i.ID)
@@ -230,6 +232,9 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	if c.CookieDomain == "" {
 		c.CookieDomain = webauthn.Config.GetRPID()
 	}
+	if c.InviteTTL == 0 {
+		c.InviteTTL = time.Hour
+	}
 	if c.AuthCookieTTL == 0 {
 		c.AuthCookieTTL = time.Hour * 24 * 30
 	}
@@ -247,6 +252,7 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 		loginCookieName:    c.CookieNamePrefix + "l",
 		authCookieName:     c.CookieNamePrefix + "a",
 	}
+	a.invites.ttl = a.Config.InviteTTL
 
 	a.users.path = c.UsersFile
 	if err := a.users.Reload(); err != nil {
