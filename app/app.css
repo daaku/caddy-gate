@@ -16,6 +16,15 @@ body {
   margin-top: 5rem;
 }
 
+form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+input, select, button {
+  padding: 0.25rem;
+}
+
 .error {
   display: grid;
   place-items: center;

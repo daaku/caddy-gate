@@ -99,6 +99,10 @@ func (s *userStore) RegisterCredential(userID string, credential *webauthn.Crede
 	}
 }
 
+func (s *userStore) All() []User {
+	return *s.users.Load()
+}
+
 func (s *userStore) ByID(userID string) (*User, error) {
 	users := s.users.Load()
 	for _, u := range *users {
@@ -342,6 +346,8 @@ func (a *App) inviteUser(r *http.Request) (string, *User, error) {
 	return inviteID, user, nil
 }
 
+const inputUserID = "userID"
+
 func (a *App) inviteGet(w http.ResponseWriter, r *http.Request) error {
 	user, err := a.currentUser(r)
 	if err != nil {
@@ -352,12 +358,19 @@ func (a *App) inviteGet(w http.ResponseWriter, r *http.Request) error {
 		return serr.Errorf("only admins can create invites")
 	}
 
-	// TODO render create invite ui
-	a.pageStd("Create Invite", g.Text("Create Invite")).Render(w)
-	return nil
+	return serr.Wrap(a.pageStd("Create Invite",
+		g.Group{
+			h.H1(g.Text("Create Invite")),
+			h.Form(h.Action("/invite"), h.Method(http.MethodPost),
+				h.Select(h.Name(inputUserID),
+					g.Map(a.users.All(), func(u User) g.Node {
+						return h.Option(h.Value(u.ID), g.Text(u.Name))
+					})),
+				h.Input(h.Type("submit"), h.Value("Create")),
+			),
+		},
+	).Render(w))
 }
-
-const inputUserID = "userID"
 
 func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	user, err := a.currentUser(r)
