@@ -68,6 +68,12 @@ func (u User) WebAuthnName() string                       { return u.Name }
 func (u User) WebAuthnDisplayName() string                { return u.Name }
 func (u User) WebAuthnCredentials() []webauthn.Credential { return u.Credentials }
 
+func isNotSignedInError(err error) bool {
+	return errors.Is(err, http.ErrNoCookie) ||
+		errors.Is(err, sookie.ErrExpired) ||
+		errors.Is(err, ErrUserNotFound)
+}
+
 var ErrUserNotFound = errors.New("user not found")
 
 type userStore struct {
@@ -552,19 +558,28 @@ func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+const pPkGet = "/pk-get"
+
 func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 	user, err := a.currentUser(r)
 	if err != nil {
-		a.pageError("Not Signed In", h.Pre(g.Text(err.Error()))).Render(w)
+		if !isNotSignedInError(err) {
+			return err
+		}
+		return serr.Wrap(a.pageStd("Sign In",
+			g.Group{
+				h.Button(h.Data("pk-get", pPkGet), g.Text("Login")),
+			},
+		).Render(w))
 	} else {
-		a.pageStd("Signed In",
+		return serr.Wrap(a.pageStd("Signed In",
 			g.Group{
 				h.H1(g.Textf("Welcome back, %s.", user.Name)),
 				h.Form(h.Action("/logout"), h.Method(http.MethodPost),
 					h.Button(g.Text("Logout"))),
-			}).Render(w)
+			},
+		).Render(w))
 	}
-	return nil
 }
 
 func (a *App) notFound(w http.ResponseWriter, r *http.Request) error {
