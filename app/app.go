@@ -548,6 +548,7 @@ func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
 
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 	sookie.Del(w, r, a.authCookie())
+	http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
 	return nil
 }
 
@@ -556,7 +557,12 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		a.pageError("Not Signed In", h.Pre(g.Text(err.Error()))).Render(w)
 	} else {
-		a.pageStd("Signed In", h.H1(g.Textf("Welcome back, %s.", user.Name))).Render(w)
+		a.pageStd("Signed In",
+			g.Group{
+				h.H1(g.Textf("Welcome back, %s.", user.Name)),
+				h.Form(h.Action("/logout"), h.Method(http.MethodPost),
+					h.Button(g.Text("Logout"))),
+			}).Render(w)
 	}
 	return nil
 }
