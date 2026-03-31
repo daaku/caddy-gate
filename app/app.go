@@ -237,7 +237,7 @@ type App struct {
 	users              userStore
 	invites            inviteStore
 	registerCookieName string
-	loginCookieName    string
+	signInCookieName   string
 	authCookieName     string
 	handler            http.HandlerFunc
 }
@@ -266,7 +266,7 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 		Config:             c,
 		WebAuthN:           webauthn,
 		registerCookieName: c.CookieNamePrefix + "r",
-		loginCookieName:    c.CookieNamePrefix + "l",
+		signInCookieName:   c.CookieNamePrefix + "l",
 		authCookieName:     c.CookieNamePrefix + "a",
 	}
 	a.invites.ttl = a.Config.InviteTTL
@@ -305,9 +305,9 @@ func (a *App) registerCookie() http.Cookie {
 	}
 }
 
-func (a *App) loginCookie() http.Cookie {
+func (a *App) signInCookie() http.Cookie {
 	return http.Cookie{
-		Name:     a.loginCookieName,
+		Name:     a.signInCookieName,
 		Path:     a.Config.CookiePath,
 		Domain:   a.Config.CookieDomain,
 		MaxAge:   maxAge(time.Minute * 10),
@@ -523,20 +523,20 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 
 const pPkGet = "/pk-get"
 
-func (a *App) loginGet(w http.ResponseWriter, r *http.Request) error {
+func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
 	credentialAssertion, sessionData, err := a.WebAuthN.BeginDiscoverableLogin()
 	if err != nil {
 		return serr.Wrap(err)
 	}
-	if err := sookie.Set(a.Config.CookieSecret, w, sessionData, a.loginCookie()); err != nil {
+	if err := sookie.Set(a.Config.CookieSecret, w, sessionData, a.signInCookie()); err != nil {
 		return serr.Wrap(err)
 	}
 	return serr.Wrap(json.NewEncoder(w).Encode(credentialAssertion))
 }
 
-func (a *App) loginPost(w http.ResponseWriter, r *http.Request) error {
+func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 	sessionData, err := sookie.Get[*webauthn.SessionData](
-		a.Config.CookieSecret, r, a.loginCookieName)
+		a.Config.CookieSecret, r, a.signInCookieName)
 	if err != nil {
 		return serr.Wrap(err)
 	}
@@ -576,9 +576,9 @@ func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
 	return nil, serr.Errorf("unknown user with id %q", expectedID)
 }
 
-const pLogout = "/logout"
+const pSignOut = "/logout"
 
-func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
+func (a *App) signOutPost(w http.ResponseWriter, r *http.Request) error {
 	sookie.Del(w, r, a.authCookie())
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 	return nil
@@ -592,14 +592,14 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 		}
 		return serr.Wrap(a.pageStd("Sign In",
 			g.Group{
-				h.Button(h.Data("pk-get", pPkGet), g.Text("Login")),
+				h.Button(h.Data("pk-get", pPkGet), g.Text("Sign In")),
 			},
 		).Render(w))
 	} else {
-		return serr.Wrap(a.pageStd("Signed In",
+		return serr.Wrap(a.pageStd("Welcome Back",
 			g.Group{
 				h.H1(g.Textf("Welcome back, %s.", user.Name)),
-				h.Form(h.Action(pLogout), h.Method(http.MethodPost),
+				h.Form(h.Action(pSignOut), h.Method(http.MethodPost),
 					h.Button(g.Text("Logout"))),
 			},
 		).Render(w))
@@ -619,9 +619,9 @@ func (a *App) mux() *http.ServeMux {
 	m.Handle("GET /register/{invite}", a.wrap(a.registerGet))
 	m.Handle("GET "+pPkCreate+"/{invite}", a.wrap(a.pkCreateGet))
 	m.Handle("POST "+pPkCreate+"/{invite}", a.wrap(a.pkCreatePost))
-	m.Handle("GET "+pPkGet, a.wrap(a.loginGet))
-	m.Handle("POST "+pPkGet, a.wrap(a.loginPost))
-	m.Handle("POST "+pLogout, a.wrap(a.logoutPost))
+	m.Handle("GET "+pPkGet, a.wrap(a.signInGet))
+	m.Handle("POST "+pPkGet, a.wrap(a.signInPost))
+	m.Handle("POST "+pSignOut, a.wrap(a.signOutPost))
 	m.Handle("GET /{$}", a.wrap(a.home))
 	m.Handle("/", a.wrap(a.notFound))
 	return &m

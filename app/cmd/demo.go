@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -25,9 +26,9 @@ func run(ctx context.Context) error {
 		CookieSecret: must(base64.RawURLEncoding.DecodeString(os.Getenv("COOKIE_SECRET"))),
 	}
 	wa, err := webauthn.New(&webauthn.Config{
-		RPID:          "localhost",
+		RPID:          cmp.Or(os.Getenv("RPID"), "localhost"),
 		RPDisplayName: "Caddy Gate Demo",
-		RPOrigins:     []string{"https://localhost:8080"},
+		RPOrigins:     []string{cmp.Or(os.Getenv("ORIGIN"), "https://localhost:8080")},
 	})
 	if err != nil {
 		return serr.Wrap(err)
