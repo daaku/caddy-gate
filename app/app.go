@@ -396,6 +396,7 @@ func (a *App) inviteGet(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
+	// TODO require passkey revalidation from admin
 	user, err := a.currentUser(r)
 	if err != nil {
 		return err
@@ -410,7 +411,8 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	// TODO render qr code and share invite ui
+	// TODO fix url
+	// TODO test share flow
 	inviteURL := fmt.Sprintf("https://localhost:8080/register/%s", i.ID)
 	text := fmt.Sprintf("Register Passkey for %s", i.UserID)
 	shareJSON, err := json.Marshal(struct {
@@ -452,7 +454,7 @@ func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
 	pkCreateURL := fmt.Sprintf("%s/%s", pPkCreate, inviteID)
 	a.pageStd("Add Credential",
 		g.Group{
-			h.H1(g.Textf("Add Credential for %s", user.Name)),
+			h.H1(g.Textf("Welcome, %s", user.Name)),
 			h.Button(h.Data("pk-create", pkCreateURL), g.Text("Register")),
 		}).Render(w)
 	return nil
@@ -514,9 +516,8 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	// TODO redirect somewhere?
+	// TODO configurable default redirect
 	http.Redirect(w, r, "/", http.StatusSeeOther)
-
 	return nil
 }
 
@@ -560,6 +561,7 @@ func (a *App) loginPost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
+	// TODO configured allowed redirect via cookie
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 	return nil
 }
@@ -573,6 +575,8 @@ func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
 	}
 	return nil, serr.Errorf("unknown user with id %q", expectedID)
 }
+
+const pLogout = "/logout"
 
 func (a *App) logoutPost(w http.ResponseWriter, r *http.Request) error {
 	sookie.Del(w, r, a.authCookie())
@@ -595,7 +599,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(a.pageStd("Signed In",
 			g.Group{
 				h.H1(g.Textf("Welcome back, %s.", user.Name)),
-				h.Form(h.Action("/logout"), h.Method(http.MethodPost),
+				h.Form(h.Action(pLogout), h.Method(http.MethodPost),
 					h.Button(g.Text("Logout"))),
 			},
 		).Render(w))
@@ -617,7 +621,7 @@ func (a *App) mux() *http.ServeMux {
 	m.Handle("POST "+pPkCreate+"/{invite}", a.wrap(a.pkCreatePost))
 	m.Handle("GET "+pPkGet, a.wrap(a.loginGet))
 	m.Handle("POST "+pPkGet, a.wrap(a.loginPost))
-	m.Handle("POST /logout", a.wrap(a.logoutPost))
+	m.Handle("POST "+pLogout, a.wrap(a.logoutPost))
 	m.Handle("GET /{$}", a.wrap(a.home))
 	m.Handle("/", a.wrap(a.notFound))
 	return &m
@@ -636,7 +640,7 @@ var appCSS string
 //go:embed icon-error.svg
 var iconError string
 
-func (a *App) pageShell(title string, body g.Node) g.Node {
+func (a *App) pageStd(title string, body g.Node) g.Node {
 	return h.Doctype(
 		h.HTML(h.Lang("en"),
 			h.Head(
@@ -644,15 +648,10 @@ func (a *App) pageShell(title string, body g.Node) g.Node {
 				h.Meta(h.Name("viewport"), h.Content("width=device-width, initial-scale=1")),
 				h.TitleEl(g.Text(title)),
 				h.StyleEl(g.Raw(appCSS))),
-			body))
-}
-
-func (a *App) pageStd(title string, body g.Node) g.Node {
-	return a.pageShell(title,
-		h.Body(
-			body,
-			h.Script(g.Raw(appJS)),
-		))
+			h.Body(
+				body,
+				h.Script(g.Raw(appJS)),
+			)))
 }
 
 func (a *App) pageError(title string, body g.Node) g.Node {
