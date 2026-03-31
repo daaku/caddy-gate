@@ -120,17 +120,6 @@ func (s *userStore) ByID(userID string) (*User, error) {
 	return nil, serr.Wrap(ErrUserNotFound)
 }
 
-func (s *userStore) ByCredentialID(id []byte) (*User, error) {
-	for _, u := range s.All() {
-		for _, c := range u.Credentials {
-			if bytes.Equal(c.ID, id) {
-				return &u, nil
-			}
-		}
-	}
-	return nil, serr.Wrap(ErrUserNotFound)
-}
-
 func (s *userStore) FirstAdmin() *User {
 	users := s.users.Load()
 	for _, u := range *users {
@@ -547,15 +536,11 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	credential, err := a.WebAuthN.ValidateDiscoverableLogin(a.discoverUser, *sessionData, parsedResponse)
+	waUser, _, err := a.WebAuthN.ValidatePasskeyLogin(a.discoverUser, *sessionData, parsedResponse)
 	if err != nil {
 		return serr.Wrap(err)
 	}
-
-	user, err := a.users.ByCredentialID(credential.ID)
-	if err != nil {
-		return serr.Wrap(err)
-	}
+	user := waUser.(User)
 
 	if err := sookie.Set(a.Config.CookieSecret, w, user.ID, a.authCookie()); err != nil {
 		return serr.Wrap(err)
