@@ -401,9 +401,8 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	// TODO test share flow
 	inviteURL := fmt.Sprintf("%s/register/%s", a.Config.AuthBaseURL, i.ID)
-	text := fmt.Sprintf("Register Passkey for %s", i.UserID)
+	text := fmt.Sprintf("Register key for %s\n\nGo here: ", i.UserID)
 	shareJSON, err := json.Marshal(struct {
 		URL   string `json:"url"`
 		Title string `json:"title"`
@@ -441,7 +440,7 @@ func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	pkCreateURL := fmt.Sprintf("%s/%s", pPkCreate, inviteID)
-	a.pageStd("Add Credential",
+	a.pageStd("Add Key",
 		g.Group{
 			h.H1(g.Textf("Welcome, %s", user.Name)),
 			h.Button(h.Data("pk-create", pkCreateURL), g.Text("Register")),

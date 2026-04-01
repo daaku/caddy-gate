@@ -36,6 +36,6 @@ document.querySelectorAll('[data-pk-get]').forEach(el => {
 
 document.querySelectorAll('[data-share]').forEach(el => {
   el.addEventListener('click', async () => {
-    window.share(JSON.parse(el.dataset.share))
+    await navigator.share(JSON.parse(el.dataset.share))
   })
 })
