@@ -45,3 +45,22 @@ document.querySelectorAll('[data-clip]').forEach(el => {
     await navigator.clipboard.writeText(el.dataset.clip)
   })
 })
+
+let rtf
+function toRelativeTime(futureInstant) {
+  if (!rtf) rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
+  const diffSecs = Temporal.Now.instant().until(futureInstant).total('seconds')
+  const absSecs = Math.abs(diffSecs)
+
+  if (absSecs < 60) return rtf.format(Math.round(diffSecs), 'seconds')
+  if (absSecs < 3600) return rtf.format(Math.round(diffSecs / 60), 'minutes')
+  if (absSecs < 86400) return rtf.format(Math.round(diffSecs / 3600), 'hours')
+  return rtf.format(Math.round(diffSecs / 86400), 'days')
+}
+
+document.querySelectorAll('[data-rel-time]').forEach(el => {
+  const input = el.dataset.relTime ? el.dataset.relTime : el.innerText
+  const instant = Temporal.Instant.from(input)
+  el.title = input
+  el.textContent = toRelativeTime(instant)
+})

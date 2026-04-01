@@ -73,3 +73,8 @@ button, input[type="submit"] {
 .invite {
   margin-top: 3rem;
 }
+
+.expires-in {
+  color: #888;
+  font-size: 0.93rem;
+}

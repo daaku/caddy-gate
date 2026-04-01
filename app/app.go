@@ -340,23 +340,23 @@ func (a *App) currentUser(r *http.Request) (*User, error) {
 }
 
 // returns the user from the invite
-func (a *App) inviteUser(r *http.Request) (string, *User, error) {
+func (a *App) inviteUser(r *http.Request) (*invite, *User, error) {
 	inviteID := r.PathValue("invite")
 	invite, err := a.invites.Get(inviteID)
 	if errors.Is(err, errInviteNotFound) || invite != nil && invite.expired() {
-		return "", nil, httpError(func(w http.ResponseWriter, r *http.Request) {
+		return nil, nil, httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			a.pageError("Not Found", g.Text("No valid invite found.")).Render(w)
 		})
 	}
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
 	user, err := a.users.ByID(invite.UserID)
 	if err != nil {
-		return "", nil, err
+		return nil, nil, err
 	}
-	return inviteID, user, nil
+	return invite, user, nil
 }
 
 const inputUserID = "userID"
@@ -400,6 +400,7 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	return serr.Wrap(a.pageStd("Invite Created",
 		g.Group{
 			h.H1(g.Text("Invite Created")),
+			expiresIn(i.ExpiresAt),
 			h.Pre(h.A(h.Href(inviteURL), g.Text(inviteURL))),
 			h.Div(
 				h.Button(h.Data("clip", inviteURL), g.Text("Copy URL")),
@@ -410,18 +411,32 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	).Render(w))
 }
 
+var expiredText = g.Text("EXPIRED")
+
+func expiresIn(at time.Time) g.Node {
+	inner := expiredText
+	if time.Now().Before(at) {
+		inner = g.Group{
+			g.Text("expires "),
+			h.Span(h.Data("rel-time", ""), g.Text(at.Format(time.RFC3339))),
+		}
+	}
+	return h.Span(h.Class("expires-in"), inner)
+}
+
 const pPkCreate = "/pk-create"
 
 func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
-	inviteID, user, err := a.inviteUser(r)
+	invite, user, err := a.inviteUser(r)
 	if err != nil {
 		return err
 	}
 
-	pkCreateURL := fmt.Sprintf("%s/%s", pPkCreate, inviteID)
+	pkCreateURL := fmt.Sprintf("%s/%s", pPkCreate, invite.ID)
 	a.pageStd("Add Key",
 		g.Group{
 			h.H1(g.Textf("Welcome, %s", user.Name)),
+			expiresIn(invite.ExpiresAt),
 			h.Button(h.Data("pk-create", pkCreateURL), g.Text("Register")),
 		}).Render(w)
 	return nil
@@ -447,7 +462,7 @@ func (a *App) pkCreateGet(w http.ResponseWriter, r *http.Request) error {
 const inputJSON = "json"
 
 func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
-	inviteID, user, err := a.inviteUser(r)
+	invite, user, err := a.inviteUser(r)
 	if err != nil {
 		return err
 	}
@@ -475,7 +490,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := a.invites.Delete(inviteID); err != nil {
+	if err := a.invites.Delete(invite.ID); err != nil {
 		return err
 	}
 
