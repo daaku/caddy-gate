@@ -24,6 +24,7 @@ func run(ctx context.Context) error {
 	config := app.Config{
 		UsersFile:    os.Getenv("USERS_FILE"),
 		CookieSecret: must(base64.RawURLEncoding.DecodeString(os.Getenv("COOKIE_SECRET"))),
+		AuthBaseURL:  cmp.Or(os.Getenv("AUTH_BASE_URL"), "https://localhost:8080"),
 	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          cmp.Or(os.Getenv("RPID"), "localhost"),

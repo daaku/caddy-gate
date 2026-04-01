@@ -51,6 +51,7 @@ type Config struct {
 	CookiePath       string
 	CookieNamePrefix string
 	InviteTTL        time.Duration
+	AuthBaseURL      string
 	AuthCookieTTL    time.Duration
 }
 
@@ -400,9 +401,8 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	// TODO fix url
 	// TODO test share flow
-	inviteURL := fmt.Sprintf("https://localhost:8080/register/%s", i.ID)
+	inviteURL := fmt.Sprintf("%s/register/%s", a.Config.AuthBaseURL, i.ID)
 	text := fmt.Sprintf("Register Passkey for %s", i.UserID)
 	shareJSON, err := json.Marshal(struct {
 		URL   string `json:"url"`
