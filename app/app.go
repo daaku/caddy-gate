@@ -401,7 +401,10 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		g.Group{
 			h.H1(g.Text("Invite Created")),
 			h.Pre(h.A(h.Href(inviteURL), g.Text(inviteURL))),
-			h.Button(h.Data("share", string(shareJSON)), g.Text("Share Invite")),
+			h.Div(
+				h.Button(h.Data("clip", inviteURL), g.Text("Copy URL")),
+				g.Text(" "),
+				h.Button(h.Data("share", string(shareJSON)), g.Text("Share Invite"))),
 			g.Raw(svg.String()),
 		},
 	).Render(w))

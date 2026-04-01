@@ -39,3 +39,9 @@ document.querySelectorAll('[data-share]').forEach(el => {
     await navigator.share(JSON.parse(el.dataset.share))
   })
 })
+
+document.querySelectorAll('[data-clip]').forEach(el => {
+  el.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(el.dataset.clip)
+  })
+})
