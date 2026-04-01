@@ -361,30 +361,6 @@ func (a *App) inviteUser(r *http.Request) (string, *User, error) {
 
 const inputUserID = "userID"
 
-func (a *App) inviteGet(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.currentUser(r)
-	if err != nil {
-		return err
-	}
-
-	if !slices.Contains(user.Tags, tagAdmin) {
-		return serr.Errorf("only admins can create invites")
-	}
-
-	return serr.Wrap(a.pageStd("Create Invite",
-		g.Group{
-			h.H1(g.Text("Create Invite")),
-			h.Form(h.Action("/invite"), h.Method(http.MethodPost),
-				h.Select(h.Name(inputUserID),
-					g.Map(a.users.All(), func(u User) g.Node {
-						return h.Option(h.Value(u.ID), g.Text(u.Name))
-					})),
-				h.Input(h.Type("submit"), h.Value("Create")),
-			),
-		},
-	).Render(w))
-}
-
 func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	// TODO require passkey revalidation from admin
 	user, err := a.currentUser(r)
@@ -424,7 +400,7 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 	return serr.Wrap(a.pageStd("Invite Created",
 		g.Group{
 			h.H1(g.Text("Invite Created")),
-			h.BlockQuote(h.Pre(h.A(h.Href(inviteURL), g.Text(inviteURL)))),
+			h.Pre(h.A(h.Href(inviteURL), g.Text(inviteURL))),
 			h.Button(h.Data("share", string(shareJSON)), g.Text("Share Invite")),
 			g.Raw(svg.String()),
 		},
@@ -580,11 +556,24 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 			},
 		).Render(w))
 	} else {
-		return serr.Wrap(a.pageStd("Welcome Back",
+		var inviteForm g.Node
+		if slices.Contains(user.Tags, tagAdmin) {
+			inviteForm = h.Form(h.Class("invite"), h.Action("/invite"),
+				h.Method(http.MethodPost),
+				h.H3(g.Text("Create Invite")),
+				h.Select(h.Name(inputUserID),
+					g.Map(a.users.All(), func(u User) g.Node {
+						return h.Option(h.Value(u.ID), g.Text(u.Name))
+					})),
+				h.Input(h.Type("submit"), h.Value("Create")),
+			)
+		}
+		return serr.Wrap(a.pageStd("Welcome back",
 			g.Group{
 				h.H1(g.Textf("Welcome back, %s.", user.Name)),
 				h.Form(h.Action(pSignOut), h.Method(http.MethodPost),
 					h.Button(g.Text("Sign Out"))),
+				inviteForm,
 			},
 		).Render(w))
 	}
@@ -598,7 +587,6 @@ func (a *App) notFound(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) mux() *http.ServeMux {
 	var m http.ServeMux
-	m.Handle("GET /invite", a.wrap(a.inviteGet))
 	m.Handle("POST /invite", a.wrap(a.invitePost))
 	m.Handle("GET /register/{invite}", a.wrap(a.registerGet))
 	m.Handle("GET "+pPkCreate+"/{invite}", a.wrap(a.pkCreateGet))
