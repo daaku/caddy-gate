@@ -551,9 +551,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		return serr.Wrap(a.pageStd("Sign In",
-			g.Group{
-				h.Button(h.Data("pk-get", pPkGet), g.Text("Sign In")),
-			},
+			h.Button(h.Data("pk-get", pPkGet), g.Text("Sign In")),
 		).Render(w))
 	} else {
 		var inviteForm g.Node
