@@ -560,7 +560,7 @@ func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
 	return nil, serr.Errorf("unknown user with id %q", expectedID)
 }
 
-const pSignOut = "/logout"
+const pSignOut = "/sign-out"
 
 func (a *App) signOutPost(w http.ResponseWriter, r *http.Request) error {
 	sookie.Del(w, r, a.authCookie())
@@ -584,7 +584,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 			g.Group{
 				h.H1(g.Textf("Welcome back, %s.", user.Name)),
 				h.Form(h.Action(pSignOut), h.Method(http.MethodPost),
-					h.Button(g.Text("Logout"))),
+					h.Button(g.Text("Sign Out"))),
 			},
 		).Render(w))
 	}
