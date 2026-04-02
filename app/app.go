@@ -362,10 +362,12 @@ func (a *App) inviteUser(r *http.Request) (*invite, *User, error) {
 const inputUserID = "userID"
 
 func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
-	// TODO require passkey revalidation from admin
-	user, err := a.currentUser(r)
+	user, err := a.validatePasskeyLogin(r)
 	if err != nil {
-		return err
+		return httpError(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+			a.pageError("Verification Failed", g.Text("Passkey verification failed.")).Render(w)
+		})
 	}
 
 	if !slices.Contains(user.Tags, tagAdmin) {
@@ -505,6 +507,27 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 
 const pPkGet = "/pk-get"
 
+func (a *App) validatePasskeyLogin(r *http.Request) (User, error) {
+	sessionData, err := sookie.Get[*webauthn.SessionData](
+		a.Config.CookieSecret, r, a.signInCookieName)
+	if err != nil {
+		return User{}, serr.Wrap(err)
+	}
+
+	parsedResponse, err := protocol.ParseCredentialRequestResponseBytes(
+		[]byte(r.FormValue(inputJSON)))
+	if err != nil {
+		return User{}, serr.Wrap(err)
+	}
+
+	waUser, _, err := a.WebAuthN.ValidatePasskeyLogin(a.discoverUser, *sessionData, parsedResponse)
+	if err != nil {
+		return User{}, serr.Wrap(err)
+	}
+	user := waUser.(User)
+	return user, nil
+}
+
 func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
 	credentialAssertion, sessionData, err := a.WebAuthN.BeginDiscoverableLogin()
 	if err != nil {
@@ -517,23 +540,10 @@ func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
-	sessionData, err := sookie.Get[*webauthn.SessionData](
-		a.Config.CookieSecret, r, a.signInCookieName)
+	user, err := a.validatePasskeyLogin(r)
 	if err != nil {
-		return serr.Wrap(err)
+		return err
 	}
-
-	parsedResponse, err := protocol.ParseCredentialRequestResponseBytes(
-		[]byte(r.FormValue(inputJSON)))
-	if err != nil {
-		return serr.Wrap(err)
-	}
-
-	waUser, _, err := a.WebAuthN.ValidatePasskeyLogin(a.discoverUser, *sessionData, parsedResponse)
-	if err != nil {
-		return serr.Wrap(err)
-	}
-	user := waUser.(User)
 
 	if err := sookie.Set(a.Config.CookieSecret, w, user.ID, a.authCookie()); err != nil {
 		return serr.Wrap(err)
@@ -581,7 +591,8 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 					g.Map(a.users.All(), func(u User) g.Node {
 						return h.Option(h.Value(u.ID), g.Text(u.Name))
 					})),
-				h.Input(h.Type("submit"), h.Value("Create")),
+				h.Input(h.Type("hidden"), h.Name("json")),
+				h.Input(h.Data("pk-verify", pPkGet), h.Type("submit"), h.Value("Create")),
 			)
 		}
 		return serr.Wrap(a.pageStd("Welcome back",
