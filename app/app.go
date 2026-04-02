@@ -403,7 +403,6 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		g.Group{
 			h.H1(g.Text("Invite Created")),
 			expiresIn(i.ExpiresAt),
-			h.Pre(h.A(h.Href(inviteURL), g.Text(inviteURL))),
 			h.Div(
 				h.Button(h.Data("clip", inviteURL), g.Text("Copy URL")),
 				g.Text(" "),
