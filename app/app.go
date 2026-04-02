@@ -345,6 +345,8 @@ func (a *App) currentUser(r *http.Request) (User, error) {
 	return a.userByID(userID)
 }
 
+const pInvite = "/invite"
+
 // returns the user from the invite
 func (a *App) inviteUser(r *http.Request) (*invite, waUser, error) {
 	inviteID := r.PathValue("invite")
@@ -578,7 +580,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 	} else {
 		var inviteForm g.Node
 		if slices.Contains(user.Tags, tagAdmin) {
-			inviteForm = h.Form(h.Class("invite"), h.Action("/invite"),
+			inviteForm = h.Form(h.Class("invite"), h.Action(pInvite),
 				h.Method(http.MethodPost),
 				h.H3(g.Text("Create Invite")),
 				h.Select(h.Name(inputUserID),
@@ -608,7 +610,7 @@ func (a *App) notFound(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) mux() *http.ServeMux {
 	var m http.ServeMux
-	m.Handle("POST /invite", a.wrap(a.invitePost))
+	m.Handle("POST "+pInvite, a.wrap(a.invitePost))
 	m.Handle("GET /register/{invite}", a.wrap(a.registerGet))
 	m.Handle("GET "+pPkCreate+"/{invite}", a.wrap(a.pkCreateGet))
 	m.Handle("POST "+pPkCreate+"/{invite}", a.wrap(a.pkCreatePost))
