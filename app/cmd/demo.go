@@ -22,9 +22,13 @@ func must[T any](t T, err error) T {
 
 func run(ctx context.Context) error {
 	config := app.Config{
-		UsersFile:    os.Getenv("USERS_FILE"),
+		KeysFile:     os.Getenv("KEYS_FILE"),
 		CookieSecret: must(base64.RawURLEncoding.DecodeString(os.Getenv("COOKIE_SECRET"))),
 		AuthBaseURL:  cmp.Or(os.Getenv("AUTH_BASE_URL"), "https://localhost:8080"),
+		Users: []app.User{
+			{ID: "naitik", Name: "Naitik", Tags: []string{"admin"}},
+			{ID: "shweta", Name: "Shweta"},
+		},
 	}
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          cmp.Or(os.Getenv("RPID"), "localhost"),

@@ -34,6 +34,8 @@ var (
 	_    = dump
 )
 
+const tagAdmin = "admin"
+
 type httpError http.HandlerFunc
 
 func (he httpError) Error() string {
@@ -45,28 +47,43 @@ func maxAge(d time.Duration) int {
 }
 
 type Config struct {
-	UsersFile        string
-	CookieSecret     []byte
-	CookieDomain     string
-	CookiePath       string
-	CookieNamePrefix string
-	InviteTTL        time.Duration
-	AuthBaseURL      string
-	AuthCookieTTL    time.Duration
+	KeysFile         string        `json:"keysFile"`
+	CookieSecret     []byte        `json:"cookieSecret"`
+	CookieDomain     string        `json:"cookieDomain"`
+	CookiePath       string        `json:"cookiePath"`
+	CookieNamePrefix string        `json:"cookieNamePrefix"`
+	CookieTTL        time.Duration `json:"cookieTTL"`
+	InviteTTL        time.Duration `json:"inviteTTL"`
+	AuthBaseURL      string        `json:"authBaseURL"`
+	RP               struct {
+		ID          string   `json:"id"`
+		DisplayName string   `json:"displayName"`
+		Origins     []string `json:"origins"`
+	} `json:"rp"`
+	Users []User `json:"users"`
 }
 
-// User implements webauthn.User.
 type User struct {
-	ID          string                `json:"id"`
-	Name        string                `json:"name"`
-	Tags        []string              `json:"tags"`
-	Credentials []webauthn.Credential `json:"credentials"`
+	ID   string   `json:"id"`
+	Name string   `json:"name"`
+	Tags []string `json:"tags"`
 }
 
-func (u User) WebAuthnID() []byte                         { return []byte(u.ID) }
-func (u User) WebAuthnName() string                       { return u.ID }
-func (u User) WebAuthnDisplayName() string                { return u.Name }
-func (u User) WebAuthnCredentials() []webauthn.Credential { return u.Credentials }
+type UserCredential struct {
+	UserID     string              `json:"userID"`
+	Credential webauthn.Credential `json:"credential"`
+}
+
+// waUser implements webauthn.User.
+type waUser struct {
+	user        User
+	credentials []webauthn.Credential
+}
+
+func (u waUser) WebAuthnID() []byte                         { return []byte(u.user.ID) }
+func (u waUser) WebAuthnName() string                       { return u.user.ID }
+func (u waUser) WebAuthnDisplayName() string                { return u.user.Name }
+func (u waUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
 func isNotSignedInError(err error) bool {
 	return errors.Is(err, http.ErrNoCookie) ||
@@ -76,26 +93,28 @@ func isNotSignedInError(err error) bool {
 
 var ErrUserNotFound = errors.New("user not found")
 
-type userStore struct {
-	path  string
-	lock  sync.RWMutex
-	users atomic.Pointer[[]User]
+type keyStore struct {
+	path string
+	lock sync.RWMutex
+	keys atomic.Pointer[[]UserCredential]
 }
 
-func (s *userStore) RegisterCredential(userID string, credential *webauthn.Credential) error {
+func (s *keyStore) All() []UserCredential {
+	return *s.keys.Load()
+}
+
+func (s *keyStore) RegisterCredential(user User, credential *webauthn.Credential) error {
 	for {
-		users := s.users.Load()
-		usersCopy := slices.Clone(*users)
-		for i, u := range usersCopy {
-			if u.ID == userID {
-				usersCopy[i].Credentials = append(slices.Clone(u.Credentials), *credential)
-			}
-		}
-		if !s.users.CompareAndSwap(users, &usersCopy) {
+		keys := s.keys.Load()
+		newKeys := append(slices.Clone(*keys), UserCredential{
+			UserID:     user.ID,
+			Credential: *credential,
+		})
+		if !s.keys.CompareAndSwap(keys, &newKeys) {
 			continue // try again
 		}
 
-		jsonB, err := json.MarshalIndent(usersCopy, "", "  ")
+		jsonB, err := json.MarshalIndent(newKeys, "", "  ")
 		if err != nil {
 			return serr.Wrap(err)
 		}
@@ -107,56 +126,27 @@ func (s *userStore) RegisterCredential(userID string, credential *webauthn.Crede
 	}
 }
 
-func (s *userStore) All() []User {
-	return *s.users.Load()
-}
-
-func (s *userStore) ByID(userID string) (*User, error) {
-	users := s.users.Load()
-	for _, u := range *users {
-		if u.ID == userID {
-			return &u, nil
+func (s *keyStore) WaUser(u User) waUser {
+	keys := s.keys.Load()
+	wu := waUser{user: u}
+	for _, uc := range *keys {
+		if uc.UserID == u.ID {
+			wu.credentials = append(wu.credentials, uc.Credential)
 		}
 	}
-	return nil, serr.Wrap(ErrUserNotFound)
+	return wu
 }
 
-func (s *userStore) FirstAdmin() *User {
-	users := s.users.Load()
-	for _, u := range *users {
-		if slices.Contains(u.Tags, tagAdmin) {
-			return &u
-		}
-	}
-	return nil
-}
-
-const tagAdmin = "admin"
-
-func (s *userStore) Validate() error {
-	users := s.users.Load()
-	if len(*users) == 0 {
-		return serr.Errorf("at least one user must be defined in %q", s.path)
-	}
-	validAdmins := slices.ContainsFunc(*users, func(u User) bool {
-		return slices.Contains(u.Tags, tagAdmin) && len(u.Credentials) > 0
-	})
-	if !validAdmins {
-		return serr.Errorf("no admin user with credentials in %q", s.path)
-	}
-	return nil
-}
-
-func (s *userStore) Reload() error {
+func (s *keyStore) Reload() error {
 	jsonB, err := os.ReadFile(s.path)
 	if err != nil {
 		return serr.Wrap(err)
 	}
-	var users []User
-	if err := json.Unmarshal(jsonB, &users); err != nil {
+	var keys []UserCredential
+	if err := json.Unmarshal(jsonB, &keys); err != nil {
 		return serr.Wrap(err)
 	}
-	s.users.Store(&users)
+	s.keys.Store(&keys)
 	return nil
 }
 
@@ -224,7 +214,7 @@ type App struct {
 	Config   Config
 	WebAuthN *webauthn.WebAuthn
 
-	users              userStore
+	keys               keyStore
 	invites            inviteStore
 	registerCookieName string
 	signInCookieName   string
@@ -233,8 +223,8 @@ type App struct {
 }
 
 func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
-	if c.UsersFile == "" {
-		return nil, serr.Errorf("must specify UsersFile in config")
+	if c.KeysFile == "" {
+		return nil, serr.Errorf("must specify KeysFile in config")
 	}
 	if c.CookiePath == "" {
 		c.CookiePath = "/"
@@ -245,8 +235,8 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	if c.InviteTTL == 0 {
 		c.InviteTTL = time.Hour
 	}
-	if c.AuthCookieTTL == 0 {
-		c.AuthCookieTTL = time.Hour * 24 * 30
+	if c.CookieTTL == 0 {
+		c.CookieTTL = time.Hour * 24 * 30
 	}
 	if c.CookieNamePrefix == "" {
 		c.CookieNamePrefix = "gate-"
@@ -261,21 +251,20 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	}
 	a.invites.ttl = a.Config.InviteTTL
 
-	a.users.path = c.UsersFile
-	if err := a.users.Reload(); err != nil {
+	a.keys.path = c.KeysFile
+	if err := a.keys.Reload(); err != nil {
 		return nil, err
 	}
 
-	if err := a.users.Validate(); err != nil {
-		if firstAdmin := a.users.FirstAdmin(); firstAdmin != nil {
-			i := invite{UserID: firstAdmin.ID}
-			if err := a.invites.Create(&i); err != nil {
-				return nil, err
-			}
-			log.Printf("Created initial invite: %s", i.ID)
-		} else {
+	if len(a.Config.Users) == 0 {
+		return nil, serr.Errorf("must configure some users")
+	}
+	if len(a.keys.All()) == 0 {
+		i := invite{UserID: a.Config.Users[0].ID}
+		if err := a.invites.Create(&i); err != nil {
 			return nil, err
 		}
+		log.Printf("Created initial invite: %s", i.ID)
 	}
 
 	m := http.NewCrossOriginProtection().Handler(a.mux())
@@ -311,10 +300,19 @@ func (a *App) authCookie() http.Cookie {
 		Name:     a.authCookieName,
 		Path:     a.Config.CookiePath,
 		Domain:   a.Config.CookieDomain,
-		MaxAge:   maxAge(a.Config.AuthCookieTTL),
+		MaxAge:   maxAge(a.Config.CookieTTL),
 		Secure:   true,
 		HttpOnly: true,
 	}
+}
+
+func (a *App) userByID(id string) (User, error) {
+	for _, user := range a.Config.Users {
+		if user.ID == id {
+			return user, nil
+		}
+	}
+	return User{}, serr.Errorf("invalid user id %q: %w", id, ErrUserNotFound)
 }
 
 func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
@@ -331,32 +329,32 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 }
 
 // returns the current logged in user
-func (a *App) currentUser(r *http.Request) (*User, error) {
+func (a *App) currentUser(r *http.Request) (User, error) {
 	userID, err := sookie.Get[string](a.Config.CookieSecret, r, a.authCookieName)
 	if err != nil {
-		return nil, serr.Wrap(err)
+		return User{}, serr.Wrap(err)
 	}
-	return a.users.ByID(userID)
+	return a.userByID(userID)
 }
 
 // returns the user from the invite
-func (a *App) inviteUser(r *http.Request) (*invite, *User, error) {
+func (a *App) inviteUser(r *http.Request) (*invite, waUser, error) {
 	inviteID := r.PathValue("invite")
 	invite, err := a.invites.Get(inviteID)
 	if errors.Is(err, errInviteNotFound) || invite != nil && invite.expired() {
-		return nil, nil, httpError(func(w http.ResponseWriter, r *http.Request) {
+		return nil, waUser{}, httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			a.pageError("Not Found", g.Text("No valid invite found.")).Render(w)
 		})
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, waUser{}, err
 	}
-	user, err := a.users.ByID(invite.UserID)
+	user, err := a.userByID(invite.UserID)
 	if err != nil {
-		return nil, nil, err
+		return nil, waUser{}, err
 	}
-	return invite, user, nil
+	return invite, a.keys.WaUser(user), nil
 }
 
 const inputUserID = "userID"
@@ -436,7 +434,7 @@ func (a *App) registerGet(w http.ResponseWriter, r *http.Request) error {
 	pkCreateURL := fmt.Sprintf("%s/%s", pPkCreate, invite.ID)
 	a.pageStd("Add Key",
 		g.Group{
-			h.H1(g.Textf("Welcome, %s", user.Name)),
+			h.H1(g.Textf("Welcome, %s", user.user.Name)),
 			expiresIn(invite.ExpiresAt),
 			h.Button(h.Data("pk-create", pkCreateURL), g.Text("Register")),
 		}).Render(w)
@@ -487,7 +485,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	if err := a.users.RegisterCredential(user.ID, credential); err != nil {
+	if err := a.keys.RegisterCredential(user.user, credential); err != nil {
 		return err
 	}
 
@@ -495,7 +493,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := sookie.Set(a.Config.CookieSecret, w, user.ID, a.authCookie()); err != nil {
+	if err := sookie.Set(a.Config.CookieSecret, w, user.user.ID, a.authCookie()); err != nil {
 		return serr.Wrap(err)
 	}
 
@@ -519,12 +517,11 @@ func (a *App) validatePasskeyLogin(r *http.Request) (User, error) {
 		return User{}, serr.Wrap(err)
 	}
 
-	waUser, _, err := a.WebAuthN.ValidatePasskeyLogin(a.discoverUser, sessionData, parsedResponse)
+	user, _, err := a.WebAuthN.ValidatePasskeyLogin(a.discoverUser, sessionData, parsedResponse)
 	if err != nil {
 		return User{}, serr.Wrap(err)
 	}
-	user := waUser.(User)
-	return user, nil
+	return user.(waUser).user, nil
 }
 
 func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
@@ -555,12 +552,11 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 
 func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
 	expectedID := string(userHandle)
-	for _, u := range a.users.All() {
-		if u.ID == expectedID {
-			return u, nil
-		}
+	user, err := a.userByID(expectedID)
+	if err != nil {
+		return nil, err
 	}
-	return nil, serr.Errorf("unknown user with id %q", expectedID)
+	return a.keys.WaUser(user), nil
 }
 
 const pSignOut = "/sign-out"
@@ -587,7 +583,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 				h.Method(http.MethodPost),
 				h.H3(g.Text("Create Invite")),
 				h.Select(h.Name(inputUserID),
-					g.Map(a.users.All(), func(u User) g.Node {
+					g.Map(a.Config.Users, func(u User) g.Node {
 						return h.Option(h.Value(u.ID), g.Text(u.Name))
 					})),
 				h.Input(h.Type("hidden"), h.Name("json")),
