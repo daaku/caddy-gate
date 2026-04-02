@@ -127,9 +127,8 @@ func (s *keyStore) RegisterCredential(user User, credential *webauthn.Credential
 }
 
 func (s *keyStore) WaUser(u User) waUser {
-	keys := s.keys.Load()
 	wu := waUser{user: u}
-	for _, uc := range *keys {
+	for _, uc := range s.All() {
 		if uc.UserID == u.ID {
 			wu.credentials = append(wu.credentials, uc.Credential)
 		}
@@ -313,6 +312,15 @@ func (a *App) userByID(id string) (User, error) {
 		}
 	}
 	return User{}, serr.Errorf("invalid user id %q: %w", id, ErrUserNotFound)
+}
+
+func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
+	expectedID := string(userHandle)
+	user, err := a.userByID(expectedID)
+	if err != nil {
+		return nil, err
+	}
+	return a.keys.WaUser(user), nil
 }
 
 func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
@@ -548,15 +556,6 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 	// TODO configured allowed redirect via cookie
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 	return nil
-}
-
-func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
-	expectedID := string(userHandle)
-	user, err := a.userByID(expectedID)
-	if err != nil {
-		return nil, err
-	}
-	return a.keys.WaUser(user), nil
 }
 
 const pSignOut = "/sign-out"
