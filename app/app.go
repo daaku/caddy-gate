@@ -508,7 +508,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 const pPkGet = "/pk-get"
 
 func (a *App) validatePasskeyLogin(r *http.Request) (User, error) {
-	sessionData, err := sookie.Get[*webauthn.SessionData](
+	sessionData, err := sookie.Get[webauthn.SessionData](
 		a.Config.CookieSecret, r, a.signInCookieName)
 	if err != nil {
 		return User{}, serr.Wrap(err)
@@ -520,7 +520,7 @@ func (a *App) validatePasskeyLogin(r *http.Request) (User, error) {
 		return User{}, serr.Wrap(err)
 	}
 
-	waUser, _, err := a.WebAuthN.ValidatePasskeyLogin(a.discoverUser, *sessionData, parsedResponse)
+	waUser, _, err := a.WebAuthN.ValidatePasskeyLogin(a.discoverUser, sessionData, parsedResponse)
 	if err != nil {
 		return User{}, serr.Wrap(err)
 	}
