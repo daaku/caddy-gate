@@ -46,6 +46,7 @@ document.querySelectorAll('[data-clip]').forEach(el => {
   })
 })
 
+/** @type {Intl.RelativeTimeFormat | null} */
 let rtf
 function toRelativeTime(futureInstant) {
   if (!rtf) rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
