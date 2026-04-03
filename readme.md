@@ -3,8 +3,8 @@
 Package caddygate is a caddy module that provides Passkey based authentication.
 It isn't a general purpose authentication/authorization module, but instead is
 suited for protecting resources for pre-configured users. Users are configured
-in a JSON file, which is written to with passkeys as the are added. The idea
-being that the configured users, and their passkeys are managed much like any
+in `Caddyfile`, and passkeys are written to a JSON file. The idea being that the
+configured users, and their passkeys in the JSON file are managed much like any
 configuration files.
 
 ## Users & Tags
@@ -65,9 +65,6 @@ auth.example.com {
   caddygate serve {
     keys_file "/etc/caddy/caddygate/example.com.json"
     cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
-    rp {
-      display_name "Example"
-    }
     users {
       zaphod "Zaphod" ["admin"]
       marvin "Marvin" ["crew"]
