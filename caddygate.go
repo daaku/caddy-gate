@@ -137,19 +137,19 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 	if !h.NextArg() {
 		return &GateGuard{}, nil
 	}
-	// TODO error if have a block here
+	// TODO if have a block, GateServe
 
 	switch h.Token().Text {
 	default:
 		return nil, h.Errf("unexpected token %q", h.Token().Text)
 	case sGuard:
-		// gate guard {tags}
+		// gate / {tags}
 		// gate guard named
-		// gate guard named {tags}
+		// gate guard named / {tags}
 		var g GateGuard
 		return &g, g.parseCaddyfile(h)
 	case sServe:
-		// gate serve {block}
+		// gate {block}
 		// gate serve named {block}
 		var g GateServe
 		return &g, g.parseCaddyfile(h)

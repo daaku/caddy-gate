@@ -56,7 +56,7 @@ auth.example.com {
 }
 
 admin.example.com {
-  gate admin
+  gate / admin
 }
 
 logs.example.com {
@@ -88,7 +88,7 @@ auth.example.com {
 }
 
 admin.example.com {
-  gate guard example.com admin
+  gate guard example.com / admin
 }
 
 logs.example.com {
