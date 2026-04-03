@@ -12,16 +12,21 @@ import (
 )
 
 const (
-	appID          = "gate"
-	caddyDirective = "gate"
+	// app id for shared state
+	appID = "gate"
+
+	// caddyfile syntax elements
+	sGate  = "gate"
+	sServe = "serve"
+	sGuard = "guard"
 )
 
 func init() {
 	caddy.RegisterModule(Gate{})
 	caddy.RegisterModule(GateServe{})
 	caddy.RegisterModule(GateGuard{})
-	httpcaddyfile.RegisterHandlerDirective(caddyDirective, parseCaddyfile)
-	httpcaddyfile.RegisterDirectiveOrder(caddyDirective, httpcaddyfile.Before, "respond")
+	httpcaddyfile.RegisterHandlerDirective(sGate, parseCaddyfile)
+	httpcaddyfile.RegisterDirectiveOrder(sGate, httpcaddyfile.Before, "respond")
 }
 
 type Gate struct {
@@ -51,6 +56,12 @@ func (GateServe) CaddyModule() caddy.ModuleInfo {
 		ID:  "http.handlers.gate.serve",
 		New: func() caddy.Module { return new(GateServe) },
 	}
+}
+
+func (g *GateServe) parseCaddyfile(h httpcaddyfile.Helper) error {
+	// gate serve {block}
+	// gate serve named {block}
+	panic("unimplemented")
 }
 
 // Provision provisions Gate Serve.
@@ -90,6 +101,13 @@ func (GateGuard) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
+func (g *GateGuard) parseCaddyfile(h httpcaddyfile.Helper) error {
+	// gate guard {tags}
+	// gate guard named
+	// gate guard named {tags}
+	panic("unimplemented")
+}
+
 // Provision provisions Gate Serve.
 func (g *GateGuard) Provision(ctx caddy.Context) error {
 	appModule, err := ctx.App(appID)
@@ -115,12 +133,25 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhtt
 }
 
 func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-	// gate {block}
-	// gate serve named {block}
-	//
-	// gate
-	// gate guard named
-	// gate [tags]
-	// gate guard named [tags]
-	panic("unimplemented")
+	// bare "gate"
+	if !h.NextArg() {
+		return &GateGuard{}, nil
+	}
+	// TODO error if have a block here
+
+	switch h.Token().Text {
+	default:
+		return nil, h.Errf("unexpected token %q", h.Token().Text)
+	case sGuard:
+		// gate guard {tags}
+		// gate guard named
+		// gate guard named {tags}
+		var g GateGuard
+		return &g, g.parseCaddyfile(h)
+	case sServe:
+		// gate serve {block}
+		// gate serve named {block}
+		var g GateServe
+		return &g, g.parseCaddyfile(h)
+	}
 }

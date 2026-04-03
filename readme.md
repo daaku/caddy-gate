@@ -12,8 +12,8 @@ configuration files.
 Users are made up of:
 
 - `id`, a human readable unique username, like `neo`
-- `name`, a human readble display name, like `Anderson`
-- `tags`, an array of string tags, like `["admin" "billing"]`
+- `name`, a human readble display name, like `"Anderson"`
+- `tags`, optional tags, like `admin billing`.
 
 Tags can be used to control access.
 
@@ -48,15 +48,15 @@ auth.example.com {
     data_dir "/etc/caddy/gate/example.com"
     cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     users {
-      zaphod "Zaphod" ["admin" "crew"]
-      trillian "Trillan" ["admin" "crew"]
-      marvin "Marvin" ["crew"]
+      zaphod "Zaphod" admin crew
+      trillian "Trillan" admin crew
+      marvin "Marvin" crew
     }
   }
 }
 
 admin.example.com {
-  gate ["admin"]
+  gate admin
 }
 
 logs.example.com {
@@ -80,15 +80,15 @@ auth.example.com {
       origin "https://example.com"
     }
     users {
-      zaphod "Zaphod" ["admin" "crew"]
-      trillian "Trillan" ["admin" "crew"]
-      marvin "Marvin" ["crew"]
+      zaphod "Zaphod" admin crew
+      trillian "Trillan" admin crew
+      marvin "Marvin" crew
     }
   }
 }
 
 admin.example.com {
-  gate guard example.com ["admin"]
+  gate guard example.com admin
 }
 
 logs.example.com {
