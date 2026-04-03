@@ -45,7 +45,7 @@ Required configuration:
 ```Caddyfile
 auth.example.com {
   gate {
-    data_dir "/etc/caddy/gate/example.com"
+    data_dir /etc/caddy/gate/example.com
     cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     users {
       zaphod "Zaphod" admin crew
@@ -69,15 +69,15 @@ logs.example.com {
 ```Caddyfile
 auth.example.com {
   gate serve example.com {
-    data_dir "/etc/caddy/gate/example.com"
+    data_dir /etc/caddy/gate/example.com
     cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
-    cookie_domain "example.com"
+    cookie_domain example.com
     cookie_ttl 30d
-    auth_base_url "https://auth.example.com"
+    auth_base_url https://auth.example.com
     rp {
-      id "example.com"
+      id example.com
       display_name "Example"
-      origin "https://example.com"
+      origin https://example.com
     }
     users {
       zaphod "Zaphod" admin crew
