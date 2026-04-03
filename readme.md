@@ -44,8 +44,8 @@ Required configuration:
 
 ```Caddyfile
 auth.example.com {
-  caddygate serve {
-    data_dir "/etc/caddy/caddygate/example.com"
+  gate serve {
+    data_dir "/etc/caddy/gate/example.com"
     cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     users {
       zaphod "Zaphod" ["admin" "crew"]
@@ -56,11 +56,11 @@ auth.example.com {
 }
 
 admin.example.com {
-  caddygate ["admin"]
+  gate ["admin"]
 }
 
 logs.example.com {
-  caddygate
+  gate
 }
 ```
 
@@ -68,8 +68,8 @@ logs.example.com {
 
 ```Caddyfile
 auth.example.com {
-  caddygate serve example.com {
-    data_dir "/etc/caddy/caddygate/example.com"
+  gate serve example.com {
+    data_dir "/etc/caddy/gate/example.com"
     cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     cookie_domain "example.com"
     cookie_ttl 30d
@@ -88,11 +88,11 @@ auth.example.com {
 }
 
 admin.example.com {
-  caddygate guard example.com ["admin"]
+  gate guard example.com ["admin"]
 }
 
 logs.example.com {
-  caddygate guard example.com
+  gate guard example.com
 }
 ```
 
