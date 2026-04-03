@@ -13,7 +13,7 @@ Users are made up of:
 
 - `id`, a human readable unique username, like `neo`
 - `name`, a human readble display name, like `Anderson`
-- `tags`, an array of string tags, like `["admin", "billing"]`
+- `tags`, an array of string tags, like `["admin" "billing"]`
 
 Tags can be used to control access.
 
