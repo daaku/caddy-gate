@@ -1,80 +1,126 @@
-// Package caddygate provides Passkey based authentication.
-// It is meant for small use cases where you want to protect resources without
-// depending on external auth services.
+// Package caddygate provides Passkey based authentication for Caddy.
 package caddygate
 
 import (
-	"path/filepath"
-	"time"
+	"fmt"
+	"net/http"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/daaku/caddygate/app"
+)
+
+const (
+	appID          = "gate"
+	caddyDirective = "gate"
 )
 
 func init() {
-	caddy.RegisterModule(&Gate{})
-}
-
-// named instances (support multiple)
-// config:
-//   rpID
-//   origin
-//   cookie ttl
-//   cookie secret (generated)
-//   token secret (generated)
-//   users (managed)
-// user:
-//   id
-//   key
-//   tags
-
-type User struct{}
-
-type FileStore struct {
-	Path string
-}
-
-func (f *FileStore) Load(ctx caddy.Context) ([]User, error) {
-	panic("unimplemented")
+	caddy.RegisterModule(Gate{})
+	caddy.RegisterModule(GateServe{})
+	caddy.RegisterModule(GateGuard{})
+	httpcaddyfile.RegisterHandlerDirective(caddyDirective, parseCaddyfile)
+	httpcaddyfile.RegisterDirectiveOrder(caddyDirective, httpcaddyfile.Before, "respond")
 }
 
 type Gate struct {
-	Name         string        `json:"name,omitempty"`
-	RPID         string        `json:"rpID,omitempty"`
-	Origin       []string      `json:"origin,omitempty"`
-	CookieTTL    time.Duration `json:"cookieTTL,omitempty"`
-	CookieSecret []byte        `json:"cookieSecret,omitempty"`
-	FileStore    string        `json:"fileStore,omitempty"`
+	app map[string]app.App
 }
 
 // CaddyModule returns the Caddy module information.
-func (*Gate) CaddyModule() caddy.ModuleInfo {
+func (Gate) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "com.github.daaku.caddygate",
+		ID:  appID,
 		New: func() caddy.Module { return new(Gate) },
 	}
 }
 
-func (g *Gate) name() string {
-	if g.Name == "" {
-		return "caddygate"
-	}
-	return g.Name
-}
-
-func (g *Gate) cookieTTL() time.Duration {
-	if g.CookieTTL == 0 {
-		return time.Hour * 24 * 30
-	}
-	return g.CookieTTL
-}
-
-func (g *Gate) fileStore() string {
-	if g.FileStore == "" {
-		return filepath.Join()
-	}
-	return g.FileStore
-}
-
 func (g *Gate) Provision(ctx caddy.Context) error {
 	return nil
+}
+
+type GateServe struct {
+	Name   string     `json:"name,omitempty"`
+	Config app.Config `json:"config"`
+}
+
+// CaddyModule returns the Caddy module information.
+func (GateServe) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{
+		ID:  "http.handlers.gate.serve",
+		New: func() caddy.Module { return new(GateServe) },
+	}
+}
+
+// Provision provisions Gate Serve.
+func (g *GateServe) Provision(ctx caddy.Context) error {
+	appModule, err := ctx.App(appID)
+	if err != nil {
+		return err
+	}
+
+	gate := appModule.(*Gate)
+	if gate == nil {
+		return fmt.Errorf("%s app is nil", appID)
+	}
+	return nil
+}
+
+// Validate implements caddy.Validator.
+func (g *GateServe) Validate() error {
+	return nil
+}
+
+// ServeHTTP serves the Gate UI.
+func (g *GateServe) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
+	panic("unimplemented")
+}
+
+type GateGuard struct {
+	Name string   `json:"name,omitempty"`
+	Tags []string `json:"tags,omitempty"`
+}
+
+// CaddyModule returns the Caddy module information.
+func (GateGuard) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{
+		ID:  "http.handlers.gate.guard",
+		New: func() caddy.Module { return new(GateGuard) },
+	}
+}
+
+// Provision provisions Gate Serve.
+func (g *GateGuard) Provision(ctx caddy.Context) error {
+	appModule, err := ctx.App(appID)
+	if err != nil {
+		return err
+	}
+
+	gate := appModule.(*Gate)
+	if gate == nil {
+		return fmt.Errorf("%s app is nil", appID)
+	}
+	return nil
+}
+
+// Validate implements caddy.Validator.
+func (g *GateGuard) Validate() error {
+	return nil
+}
+
+// ServeHTTP serves the Gate UI.
+func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
+	panic("unimplemented")
+}
+
+func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+	// gate {block}
+	// gate serve named {block}
+	//
+	// gate
+	// gate guard named
+	// gate [tags]
+	// gate guard named [tags]
+	panic("unimplemented")
 }

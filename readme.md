@@ -44,7 +44,7 @@ Required configuration:
 
 ```Caddyfile
 auth.example.com {
-  gate serve {
+  gate {
     data_dir "/etc/caddy/gate/example.com"
     cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     users {
