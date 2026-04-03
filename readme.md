@@ -31,15 +31,15 @@ other, so use it immediately or restart the server to generate a fresh invite.
 auth.example.com {
   caddygate serve example.com {
     keys_file "/etc/caddy/caddygate/example.com.json"
-		cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+    cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     cookie_domain "example.com"
     cookie_ttl 30d
     auth_base_url "https://auth.example.com"
-		rp {
-			id "example.com"
-			display_name "Example"
-			origin "https://example.com"
-		}
+    rp {
+      id "example.com"
+      display_name "Example"
+      origin "https://example.com"
+    }
     users {
       zaphod "Zaphod" ["admin"]
       marvin "Marvin" ["crew"]
@@ -63,10 +63,10 @@ logs.example.com {
 auth.example.com {
   caddygate serve {
     keys_file "/etc/caddy/caddygate/example.com.json"
-		cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
-		rp {
-			display_name "Example"
-		}
+    cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+    rp {
+      display_name "Example"
+    }
     users {
       zaphod "Zaphod" ["admin"]
       marvin "Marvin" ["crew"]
