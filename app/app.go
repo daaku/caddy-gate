@@ -259,11 +259,16 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 		return nil, serr.Errorf("must configure some users")
 	}
 	if len(a.keys.All()) == 0 {
-		i := invite{UserID: a.Config.Users[0].ID}
-		if err := a.invites.Create(&i); err != nil {
-			return nil, err
+		for _, u := range a.Config.Users {
+			if slices.Contains(u.Tags, tagAdmin) {
+				i := &invite{UserID: a.Config.Users[0].ID}
+				if err := a.invites.Create(i); err != nil {
+					return nil, err
+				}
+				log.Println("Created initial invite:", a.inviteURL(i))
+				break
+			}
 		}
-		log.Printf("Created initial invite: %s", i.ID)
 	}
 
 	m := http.NewCrossOriginProtection().Handler(a.mux())
@@ -367,6 +372,10 @@ func (a *App) inviteUser(r *http.Request) (*invite, waUser, error) {
 	return invite, a.keys.WaUser(user), nil
 }
 
+func (a *App) inviteURL(i *invite) string {
+	return fmt.Sprintf("%s/register/%s", a.Config.AuthBaseURL, i.ID)
+}
+
 const inputUserID = "userID"
 
 func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
@@ -387,7 +396,7 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	inviteURL := fmt.Sprintf("%s/register/%s", a.Config.AuthBaseURL, i.ID)
+	inviteURL := a.inviteURL(i)
 	text := fmt.Sprintf("Register key for %s\n\nGo here: ", i.UserID)
 	shareJSON, err := json.Marshal(struct {
 		URL   string `json:"url"`
