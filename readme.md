@@ -13,17 +13,18 @@ Users are made up of:
 
 - `id`, a human readable unique username, like `neo`
 - `name`, a human readble display name, like `Anderson`
-- `tags`, an array of string tags, like ["admin", "billing"]
+- `tags`, an array of string tags, like `["admin", "billing"]`
 
 Tags can be used to control access.
 
 ## Bootstrapping
 
-Invites for adding new passkeys can be created by an admin. But the first admin
-passkey needs to be bootstrapped. At startup, if no users with passkeys are
-found, then an invite is created for the first admin, and the URL is printed in
-the logs. Use this to register the first passkey. This invite expires like any
-other, so use it immediately or restart the server to generate a fresh invite.
+Invites for adding new passkeys can be created by an `admin`. But the first
+admin passkey needs to be bootstrapped. At startup, if no users with passkeys
+are found, then an invite is created for the first admin, and the URL is printed
+in the logs. Use this to register the first passkey. This invite expires like
+any other, so use it immediately or restart the server to generate a fresh
+invite.
 
 ## Caddyfile
 
