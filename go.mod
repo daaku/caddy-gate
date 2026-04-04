@@ -4,6 +4,7 @@ go 1.26.1
 
 require (
 	github.com/caddyserver/caddy/v2 v2.11.2
+	github.com/daaku/ensure v1.0.1
 	github.com/daaku/lands v1.1.0
 	github.com/daaku/serr v1.0.0
 	github.com/daaku/sookie v0.5.0

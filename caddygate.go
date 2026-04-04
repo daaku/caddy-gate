@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/daaku/caddygate/app"
@@ -19,6 +20,7 @@ const (
 	sGate  = "gate"
 	sServe = "serve"
 	sGuard = "guard"
+	sSlash = "/"
 )
 
 func init() {
@@ -58,7 +60,7 @@ func (GateServe) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-func (g *GateServe) parseCaddyfile(h httpcaddyfile.Helper) error {
+func (g *GateServe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	// gate serve {block}
 	// gate serve named {block}
 	panic("unimplemented")
@@ -101,11 +103,22 @@ func (GateGuard) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-func (g *GateGuard) parseCaddyfile(h httpcaddyfile.Helper) error {
-	// gate guard {tags}
+func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
+	// gate / {tags}
 	// gate guard named
-	// gate guard named {tags}
-	panic("unimplemented")
+	// gate guard named / {tags}
+	switch h.Token().Text {
+	default:
+		return h.Errf("unexpected %q", h.Token().Text)
+	case sSlash:
+		// h.Next() // consume slash
+		g.Tags = h.RemainingArgs()
+		if len(g.Tags) == 0 {
+			return h.Err("must specify tags after slash")
+		}
+	case sGuard:
+	}
+	return nil
 }
 
 // Provision provisions Gate Serve.
@@ -133,6 +146,7 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhtt
 }
 
 func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+	h.Next() // consume the directive
 	// bare "gate"
 	if !h.NextArg() {
 		return &GateGuard{}, nil
@@ -142,16 +156,16 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 	switch h.Token().Text {
 	default:
 		return nil, h.Errf("unexpected token %q", h.Token().Text)
-	case sGuard:
+	case sGuard, sSlash:
 		// gate / {tags}
 		// gate guard named
 		// gate guard named / {tags}
 		var g GateGuard
-		return &g, g.parseCaddyfile(h)
+		return &g, g.UnmarshalCaddyfile(h.Dispenser)
 	case sServe:
 		// gate {block}
 		// gate serve named {block}
 		var g GateServe
-		return &g, g.parseCaddyfile(h)
+		return &g, g.UnmarshalCaddyfile(h.Dispenser)
 	}
 }
