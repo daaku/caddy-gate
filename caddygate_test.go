@@ -69,7 +69,7 @@ func TestErrorParseCaddyfile(t *testing.T) {
 		{
 			"gate guard missing name",
 			`gate guard`,
-			"followed by name",
+			"must specify name",
 		},
 		{
 			"default gate with slash and no tags",

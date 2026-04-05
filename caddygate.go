@@ -119,7 +119,7 @@ func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
 		}
 	case sGuard:
 		if !h.NextArg() {
-			return h.Err("gate guard must be followed by name")
+			return h.Err("must specify name after gate guard")
 		}
 		g.Name = h.Token().Text
 
