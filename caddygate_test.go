@@ -76,6 +76,11 @@ func TestErrorParseCaddyfile(t *testing.T) {
 			`gate /`,
 			"must specify tags",
 		},
+		{
+			"named gate with slash and no tags",
+			`gate guard example.com /`,
+			"must specify tags",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
