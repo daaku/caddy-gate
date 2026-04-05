@@ -48,9 +48,9 @@ auth.example.com {
     data_dir /etc/caddy/gate/example.com
     cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     users {
-      zaphod "Zaphod" admin crew
-      trillian "Trillan" admin crew
-      marvin "Marvin" crew
+      zaphod "Zaphod" admin
+      trillian "Trillan" admin
+      marvin
     }
   }
 }
