@@ -65,10 +65,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 }
 
 func TestErrorParseCaddyfile(t *testing.T) {
-	cases := []struct {
-		name, input string
-		err         string
-	}{
+	cases := []struct{ name, input, err string }{
 		{
 			"gate guard missing name",
 			`gate guard`,
