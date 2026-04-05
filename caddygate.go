@@ -197,7 +197,7 @@ func unmarsalRpLine(c *app.Config, d *caddyfile.Dispenser) error {
 	var err error
 	switch d.Token().Text {
 	default:
-		return d.Errf("unexpected option in serve block: %s", d.Token().Text)
+		return d.Errf("unexpected option in rp block: %s", d.Token().Text)
 	case "display_name":
 		err = nextArgString(&c.RP.DisplayName, d)
 	case "id":
@@ -270,17 +270,22 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
 	h.Next() // consume "gate"
 
-	// bare "gate", implicit guard with default config
-	if !h.NextArg() {
-		return &GateGuard{}, nil
-	}
-
-	// TODO immediate serve block {}, serve with default name
+	// look for immediate block to trigger serve for default config
+	var foundImmediateBlock bool
+	var c app.Config
 	for nesting := h.Nesting(); h.NextBlock(nesting); {
-		var c app.Config
+		foundImmediateBlock = true
 		if err := unmarshalAppConfigLine(&c, h.Dispenser); err != nil {
 			return nil, err
 		}
+	}
+	if foundImmediateBlock {
+		return &GateServe{Config: c}, nil
+	}
+
+	// bare "gate", implicit guard with default config
+	if !h.NextArg() {
+		return &GateGuard{}, nil
 	}
 
 	switch h.Token().Text {

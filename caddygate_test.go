@@ -6,6 +6,7 @@ import (
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
+	"github.com/daaku/caddygate/app"
 	"github.com/daaku/ensure"
 )
 
@@ -47,11 +48,22 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 			},
 		},
 		{
-			"named gate guard with single tag",
+			"named gate guard with multiple tags",
 			`gate guard example.com / admin crew`,
 			&GateGuard{
 				Name: "example.com",
 				Tags: []string{"admin", "crew"},
+			},
+		},
+		{
+			"gate default serve block",
+			`gate {
+				auth_base_url https://foo.com
+			}`,
+			&GateServe{
+				Config: app.Config{
+					AuthBaseURL: "https://foo.com",
+				},
 			},
 		},
 	}
