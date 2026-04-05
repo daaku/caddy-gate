@@ -119,7 +119,7 @@ func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
 		}
 	case sGuard:
 		if !h.NextArg() {
-			return h.ArgErr()
+			return h.Err("gate guard must be followed by name")
 		}
 		g.Name = h.Token().Text
 
@@ -291,11 +291,17 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 		// gate guard named
 		// gate guard named / {tags}
 		var g GateGuard
-		return &g, g.UnmarshalCaddyfile(h.Dispenser)
+		if err := g.UnmarshalCaddyfile(h.Dispenser); err != nil {
+			return nil, err
+		}
+		return &g, nil
 	case sServe:
 		// gate {block}
 		// gate serve named {block}
 		var g GateServe
-		return &g, g.UnmarshalCaddyfile(h.Dispenser)
+		if err := g.UnmarshalCaddyfile(h.Dispenser); err != nil {
+			return nil, err
+		}
+		return &g, nil
 	}
 }

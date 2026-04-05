@@ -13,8 +13,7 @@ func h(v string) httpcaddyfile.Helper {
 	return httpcaddyfile.Helper{}.WithDispenser(caddyfile.NewTestDispenser(v))
 }
 
-func TestParseCaddyfile(t *testing.T) {
-	t.Parallel()
+func TestSuccessParseCaddyfile(t *testing.T) {
 	cases := []struct {
 		name, input string
 		expected    caddyhttp.MiddlewareHandler
@@ -65,8 +64,22 @@ func TestParseCaddyfile(t *testing.T) {
 	}
 }
 
-// func TestNamedGuard(t *testing.T) {
-// 	v, err := parseCaddyfile(h(`gate guard example.com`))
-// 	ensure.Nil(t, err)
-// 	ensure.DeepEqual(t, v, &GateGuard{})
-// }
+func TestErrorParseCaddyfile(t *testing.T) {
+	cases := []struct {
+		name, input string
+		err         string
+	}{
+		{
+			"gate guard missing name",
+			`gate guard`,
+			"followed by name",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			actual, err := parseCaddyfile(h(c.input))
+			ensure.Nil(t, actual)
+			ensure.StringContains(t, err.Error(), c.err)
+		})
+	}
+}
