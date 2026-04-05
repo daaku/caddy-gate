@@ -2,8 +2,10 @@
 package caddygate
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
@@ -111,12 +113,26 @@ func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
 	default:
 		return h.Errf("unexpected %q", h.Token().Text)
 	case sSlash:
-		// h.Next() // consume slash
 		g.Tags = h.RemainingArgs()
 		if len(g.Tags) == 0 {
 			return h.Err("must specify tags after slash")
 		}
 	case sGuard:
+		if !h.NextArg() {
+			return h.ArgErr()
+		}
+		g.Name = h.Token().Text
+
+		// if next arg, must be slash + tags
+		if h.NextArg() {
+			if h.Token().Text != sSlash {
+				return h.Errf("expected slash and tags but got %q", h.Token().Text)
+			}
+			g.Tags = h.RemainingArgs()
+			if len(g.Tags) == 0 {
+				return h.Err("must specify tags after slash")
+			}
+		}
 	}
 	return nil
 }
@@ -145,13 +161,127 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhtt
 	panic("unimplemented")
 }
 
+func nextArgString(dest *string, d *caddyfile.Dispenser) error {
+	if !d.NextArg() {
+		return d.ArgErr()
+	}
+	*dest = d.Token().Text
+	return nil
+}
+
+func nextArgB64URL(dest *[]byte, d *caddyfile.Dispenser) error {
+	if !d.NextArg() {
+		return d.ArgErr()
+	}
+	b, err := base64.RawURLEncoding.DecodeString(d.Token().Text)
+	if err != nil {
+		return d.Errf("invalid base64 URL encoded string: %s", d.Token().Text)
+	}
+	*dest = b
+	return nil
+}
+
+func nextArgDuration(dest *time.Duration, d *caddyfile.Dispenser) error {
+	if !d.NextArg() {
+		return d.ArgErr()
+	}
+	v, err := time.ParseDuration(d.Token().Text)
+	if err != nil {
+		return d.Errf("invalid base64 URL encoded string: %s", d.Token().Text)
+	}
+	*dest = v
+	return nil
+}
+
+func unmarsalRpLine(c *app.Config, d *caddyfile.Dispenser) error {
+	var err error
+	switch d.Token().Text {
+	default:
+		return d.Errf("unexpected option in serve block: %s", d.Token().Text)
+	case "display_name":
+		err = nextArgString(&c.RP.DisplayName, d)
+	case "id":
+		err = nextArgString(&c.RP.ID, d)
+	case "origin":
+		if !d.NextArg() {
+			return d.ArgErr()
+		}
+		c.RP.Origins = append(c.RP.Origins, d.Token().Text)
+	}
+	return err
+}
+
+func unmarshalUserLine(d *caddyfile.Dispenser) (app.User, error) {
+	var u app.User
+	if !d.NextArg() {
+		return u, d.ArgErr()
+	}
+	u.ID = d.Token().Text
+	if !d.NextArg() {
+		u.Name = u.ID
+		return u, nil
+	}
+	u.Name = d.Token().Text
+	for d.NextArg() {
+		u.Tags = append(u.Tags, d.Token().Text)
+	}
+	return u, nil
+}
+
+func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
+	var err error
+	switch d.Token().Text {
+	default:
+		return d.Errf("unexpected option in serve block: %s", d.Token().Text)
+	case "users":
+		for nesting := d.Nesting(); d.NextBlock(nesting); {
+			u, err := unmarshalUserLine(d)
+			if err != nil {
+				return err
+			}
+			c.Users = append(c.Users, u)
+		}
+	case "rp":
+		for nesting := d.Nesting(); d.NextBlock(nesting); {
+			if err := unmarsalRpLine(c, d); err != nil {
+				return err
+			}
+		}
+	case "auth_base_url":
+		err = nextArgString(&c.AuthBaseURL, d)
+	case "cookie_domain":
+		err = nextArgString(&c.CookieDomain, d)
+	case "cookie_name_prefix":
+		err = nextArgString(&c.CookieNamePrefix, d)
+	case "cookie_path":
+		err = nextArgString(&c.CookiePath, d)
+	case "data_dir":
+		err = nextArgString(&c.KeysFile, d)
+	case "cookie_secret":
+		err = nextArgB64URL(&c.CookieSecret, d)
+	case "cookie_ttl":
+		err = nextArgDuration(&c.CookieTTL, d)
+	case "invite_ttl":
+		err = nextArgDuration(&c.InviteTTL, d)
+	}
+	return err
+}
+
 func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-	h.Next() // consume the directive
-	// bare "gate"
+	h.Next() // consume "gate"
+
+	// bare "gate", implicit guard with default config
 	if !h.NextArg() {
 		return &GateGuard{}, nil
 	}
-	// TODO if have a block, GateServe
+
+	// TODO immediate serve block {}, serve with default name
+	for nesting := h.Nesting(); h.NextBlock(nesting); {
+		var c app.Config
+		if err := unmarshalAppConfigLine(&c, h.Dispenser); err != nil {
+			return nil, err
+		}
+	}
 
 	switch h.Token().Text {
 	default:
