@@ -47,7 +47,7 @@ func maxAge(d time.Duration) int {
 }
 
 type Config struct {
-	KeysFile         string        `json:"keysFile"`
+	DataDir          string        `json:"dataDir"`
 	CookieSecret     []byte        `json:"cookieSecret"`
 	CookieDomain     string        `json:"cookieDomain"`
 	CookiePath       string        `json:"cookiePath"`
@@ -222,8 +222,8 @@ type App struct {
 }
 
 func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
-	if c.KeysFile == "" {
-		return nil, serr.Errorf("must specify KeysFile in config")
+	if c.DataDir == "" {
+		return nil, serr.Errorf("must specify DataDir in config")
 	}
 	if c.CookiePath == "" {
 		c.CookiePath = "/"
@@ -250,7 +250,7 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	}
 	a.invites.ttl = a.Config.InviteTTL
 
-	a.keys.path = c.KeysFile
+	a.keys.path = c.DataDir
 	if err := a.keys.Reload(); err != nil {
 		return nil, err
 	}

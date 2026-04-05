@@ -256,7 +256,7 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 	case "cookie_path":
 		err = nextArgString(&c.CookiePath, d)
 	case "data_dir":
-		err = nextArgString(&c.KeysFile, d)
+		err = nextArgString(&c.DataDir, d)
 	case "cookie_secret":
 		err = nextArgB64URL(&c.CookieSecret, d)
 	case "cookie_ttl":
