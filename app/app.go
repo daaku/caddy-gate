@@ -13,6 +13,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -252,7 +253,7 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 	}
 	a.invites.ttl = a.Config.InviteTTL
 
-	a.keys.path = c.DataDir
+	a.keys.path = filepath.Join(c.DataDir, "keys.json")
 	if err := a.keys.Reload(); err != nil {
 		return nil, err
 	}
