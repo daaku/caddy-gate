@@ -26,9 +26,9 @@ const (
 )
 
 func init() {
-	caddy.RegisterModule(Gate{})
-	caddy.RegisterModule(GateServe{})
-	caddy.RegisterModule(GateGuard{})
+	caddy.RegisterModule(&Gate{})
+	caddy.RegisterModule(&GateServe{})
+	caddy.RegisterModule(&GateGuard{})
 	httpcaddyfile.RegisterHandlerDirective(sGate, parseCaddyfile)
 	httpcaddyfile.RegisterDirectiveOrder(sGate, httpcaddyfile.Before, "respond")
 }
@@ -38,7 +38,7 @@ type Gate struct {
 }
 
 // CaddyModule returns the Caddy module information.
-func (Gate) CaddyModule() caddy.ModuleInfo {
+func (*Gate) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  appID,
 		New: func() caddy.Module { return new(Gate) },
@@ -55,7 +55,7 @@ type GateServe struct {
 }
 
 // CaddyModule returns the Caddy module information.
-func (GateServe) CaddyModule() caddy.ModuleInfo {
+func (*GateServe) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.gate.serve",
 		New: func() caddy.Module { return new(GateServe) },
@@ -120,7 +120,7 @@ type GateGuard struct {
 }
 
 // CaddyModule returns the Caddy module information.
-func (GateGuard) CaddyModule() caddy.ModuleInfo {
+func (*GateGuard) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.gate.guard",
 		New: func() caddy.Module { return new(GateGuard) },
