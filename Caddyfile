@@ -5,11 +5,7 @@
 }
 
 auth.caddygate {
-	tls {
-		issuer internal {
-			sign_with_root
-		}
-	}
+	tls internal
 	gate {
 		data_dir {$HOME}/.local/share/caddy/gate/example.com
 		cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
