@@ -25,10 +25,11 @@ auth.caddygate {
 admin.caddygate {
 	tls internal
 	# gate / admin
+	respond "Welcome admin, you were successfully authorized."
 }
 
 home.caddygate {
 	tls internal
 	gate
-	respond "Welcome, you were successfully authorized."
+	respond "Welcome user, you were successfully authorized."
 }
