@@ -46,6 +46,12 @@ func maxAge(d time.Duration) int {
 	return int(d.Seconds())
 }
 
+type RelyingParty struct {
+	ID          string   `json:"id"`
+	DisplayName string   `json:"displayName"`
+	Origins     []string `json:"origins"`
+}
+
 type Config struct {
 	DataDir          string        `json:"dataDir"`
 	CookieSecret     []byte        `json:"cookieSecret"`
@@ -55,12 +61,8 @@ type Config struct {
 	CookieTTL        time.Duration `json:"cookieTTL"`
 	InviteTTL        time.Duration `json:"inviteTTL"`
 	AuthBaseURL      string        `json:"authBaseURL"`
-	RP               struct {
-		ID          string   `json:"id"`
-		DisplayName string   `json:"displayName"`
-		Origins     []string `json:"origins"`
-	} `json:"rp"`
-	Users []User `json:"users"`
+	RP               RelyingParty  `json:"rp"`
+	Users            []User        `json:"users"`
 }
 
 type User struct {

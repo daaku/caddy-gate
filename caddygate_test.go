@@ -1,7 +1,10 @@
 package caddygate
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"testing"
+	"time"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
@@ -15,6 +18,10 @@ func h(v string) httpcaddyfile.Helper {
 }
 
 func TestSuccessParseCaddyfile(t *testing.T) {
+	cookieSecret := make([]byte, 32)
+	rand.Read(cookieSecret)
+	cookieSecretB64 := base64.RawURLEncoding.EncodeToString(cookieSecret)
+
 	cases := []struct {
 		name, input string
 		expected    caddyhttp.MiddlewareHandler
@@ -75,12 +82,60 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 		{
 			"gate named serve block",
 			`gate serve example.com {
+				data_dir /foo/bar
 				auth_base_url https://foo.com
+				cookie_domain foo.com
+				cookie_name_prefix foo
+				cookie_path /foo
+				cookie_secret "` + cookieSecretB64 + `"
+				cookie_ttl 30h
+				invite_ttl 24h
+				rp {
+					id example.com
+					display_name "Example"
+					origin https://foo.com
+					origin https://example.com
+				}
+				users {
+					zaphod "Zaphod" admin crew
+					trillian "Trillian" admin crew
+					marvin
+				}
 			}`,
 			&GateServe{
 				Name: "example.com",
 				Config: app.Config{
-					AuthBaseURL: "https://foo.com",
+					DataDir:          "/foo/bar",
+					AuthBaseURL:      "https://foo.com",
+					CookieDomain:     "foo.com",
+					CookieNamePrefix: "foo",
+					CookiePath:       "/foo",
+					CookieTTL:        time.Hour * 30,
+					CookieSecret:     cookieSecret,
+					InviteTTL:        time.Hour * 24,
+					RP: app.RelyingParty{
+						ID:          "example.com",
+						DisplayName: "Example",
+						Origins: []string{
+							"https://foo.com",
+							"https://example.com",
+						},
+					},
+					Users: []app.User{
+						{
+							ID:   "zaphod",
+							Name: "Zaphod",
+							Tags: []string{"admin", "crew"},
+						},
+						{
+							ID:   "trillian",
+							Name: "Trillian",
+							Tags: []string{"admin", "crew"},
+						},
+						{
+							ID: "marvin",
+						},
+					},
 				},
 			},
 		},

@@ -81,8 +81,8 @@ auth.example.com {
     }
     users {
       zaphod "Zaphod" admin
-      trillian "Trillan" admin
-      marvin "Marvin"
+      trillian "Trillian" admin
+      marvin
     }
   }
 }
