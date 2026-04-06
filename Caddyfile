@@ -3,11 +3,25 @@
 	auto_https disable_redirects
 }
 
-caddygate.internal {
-	caddygate portal
+auth.internal {
+	tls internal
+	gate {
+		data_dir /etc/caddy/gate/example.com
+		cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+		users {
+			zaphod "Zaphod" admin
+			trillian "Trillan" admin
+			marvin
+		}
+	}
 }
 
-protected.internal {
+admin.internal {
 	tls internal
-	caddygate guard
+	gate / admin
+}
+
+home.internal {
+	tls internal
+	gate
 }
