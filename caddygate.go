@@ -211,23 +211,6 @@ func unmarsalRpLine(c *app.Config, d *caddyfile.Dispenser) error {
 	return err
 }
 
-func unmarshalUserLine(d *caddyfile.Dispenser) (app.User, error) {
-	var u app.User
-	if !d.NextArg() {
-		return u, d.ArgErr()
-	}
-	u.ID = d.Token().Text
-	if !d.NextArg() {
-		u.Name = u.ID
-		return u, nil
-	}
-	u.Name = d.Token().Text
-	for d.NextArg() {
-		u.Tags = append(u.Tags, d.Token().Text)
-	}
-	return u, nil
-}
-
 func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 	var err error
 	switch d.Token().Text {
@@ -235,9 +218,20 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 		return d.Errf("unexpected option in serve block: %s", d.Token().Text)
 	case "users":
 		for nesting := d.Nesting(); d.NextBlock(nesting); {
-			u, err := unmarshalUserLine(d)
-			if err != nil {
-				return err
+			segment := d.NextSegment()
+			if len(segment) == 0 {
+				continue // empty line
+			}
+			var u app.User
+			for i, token := range segment {
+				switch i {
+				default:
+					u.Tags = append(u.Tags, token.Text)
+				case 0:
+					u.ID = token.Text
+				case 1:
+					u.Name = token.Text
+				}
 			}
 			c.Users = append(c.Users, u)
 		}

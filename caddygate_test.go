@@ -59,10 +59,16 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 			"gate default serve block",
 			`gate {
 				auth_base_url https://foo.com
+				users {
+					admin
+				}
 			}`,
 			&GateServe{
 				Config: app.Config{
 					AuthBaseURL: "https://foo.com",
+					Users: []app.User{
+						{ID: "admin"},
+					},
 				},
 			},
 		},

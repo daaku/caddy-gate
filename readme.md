@@ -80,9 +80,9 @@ auth.example.com {
       origin https://example.com
     }
     users {
-      zaphod "Zaphod" admin crew
-      trillian "Trillan" admin crew
-      marvin "Marvin" crew
+      zaphod "Zaphod" admin
+      trillian "Trillan" admin
+      marvin "Marvin"
     }
   }
 }
