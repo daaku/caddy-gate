@@ -72,6 +72,18 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 				},
 			},
 		},
+		{
+			"gate named serve block",
+			`gate serve example.com {
+				auth_base_url https://foo.com
+			}`,
+			&GateServe{
+				Name: "example.com",
+				Config: app.Config{
+					AuthBaseURL: "https://foo.com",
+				},
+			},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

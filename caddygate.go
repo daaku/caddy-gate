@@ -65,7 +65,29 @@ func (GateServe) CaddyModule() caddy.ModuleInfo {
 func (g *GateServe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
 	// gate serve {block}
 	// gate serve named {block}
-	panic("unimplemented")
+	switch d.Token().Text {
+	default:
+		return d.Errf("unexpected %q", d.Token().Text)
+	case sServe:
+		if !d.NextArg() {
+			return d.Err("must specify name after gate serve")
+		}
+		g.Name = d.Token().Text
+
+		// look for immediate block to trigger serve for default config
+		var foundImmediateBlock bool
+		for nesting := d.Nesting(); d.NextBlock(nesting); {
+			foundImmediateBlock = true
+			if err := unmarshalAppConfigLine(&g.Config, d); err != nil {
+				return err
+			}
+		}
+		if foundImmediateBlock {
+			return nil
+		} else {
+			return d.Err("must specify block after gate serve <name>")
+		}
+	}
 }
 
 // Provision provisions Gate Serve.
