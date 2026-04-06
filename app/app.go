@@ -88,7 +88,7 @@ func (u waUser) WebAuthnName() string                       { return u.user.ID }
 func (u waUser) WebAuthnDisplayName() string                { return u.user.Name }
 func (u waUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
-func isNotSignedInError(err error) bool {
+func IsNotSignedInError(err error) bool {
 	return errors.Is(err, http.ErrNoCookie) ||
 		errors.Is(err, sookie.ErrExpired) ||
 		errors.Is(err, ErrUserNotFound)
@@ -122,6 +122,12 @@ func (s *keyStore) RegisterCredential(user User, credential *webauthn.Credential
 			return serr.Wrap(err)
 		}
 
+		dir := filepath.Dir(s.path)
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				return serr.Wrap(err)
+			}
+		}
 		if err := atomicfile.WriteFile(s.path, bytes.NewReader(jsonB)); err != nil {
 			return serr.Wrap(err)
 		}
@@ -142,7 +148,11 @@ func (s *keyStore) WaUser(u User) waUser {
 func (s *keyStore) Reload() error {
 	jsonB, err := os.ReadFile(s.path)
 	if err != nil {
-		return serr.Wrap(err)
+		if errors.Is(err, os.ErrNotExist) {
+			jsonB = []byte(`[]`)
+		} else {
+			return serr.Wrap(err)
+		}
 	}
 	var keys []UserCredential
 	if err := json.Unmarshal(jsonB, &keys); err != nil {
@@ -213,9 +223,9 @@ func (s *inviteStore) Delete(inviteID string) error {
 }
 
 type App struct {
-	Config   Config
-	WebAuthN *webauthn.WebAuthn
+	Config Config
 
+	wa                 *webauthn.WebAuthn
 	keys               keyStore
 	invites            inviteStore
 	registerCookieName string
@@ -224,7 +234,16 @@ type App struct {
 	handler            http.HandlerFunc
 }
 
-func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
+func NewApp(c Config) (*App, error) {
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID:          c.RP.ID,
+		RPDisplayName: c.RP.DisplayName,
+		RPOrigins:     c.RP.Origins,
+	})
+	if err != nil {
+		return nil, serr.Wrap(err)
+	}
+
 	if c.DataDir == "" {
 		return nil, serr.Errorf("must specify DataDir in config")
 	}
@@ -232,7 +251,7 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 		c.CookiePath = "/"
 	}
 	if c.CookieDomain == "" {
-		c.CookieDomain = webauthn.Config.GetRPID()
+		c.CookieDomain = wa.Config.GetRPID()
 	}
 	if c.InviteTTL == 0 {
 		c.InviteTTL = time.Hour
@@ -246,7 +265,7 @@ func NewApp(c Config, webauthn *webauthn.WebAuthn) (*App, error) {
 
 	a := &App{
 		Config:             c,
-		WebAuthN:           webauthn,
+		wa:                 wa,
 		registerCookieName: c.CookieNamePrefix + "r",
 		signInCookieName:   c.CookieNamePrefix + "l",
 		authCookieName:     c.CookieNamePrefix + "a",
@@ -345,7 +364,7 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 }
 
 // returns the current logged in user
-func (a *App) currentUser(r *http.Request) (User, error) {
+func (a *App) CurrentUser(r *http.Request) (User, error) {
 	userID, err := sookie.Get[string](a.Config.CookieSecret, r, a.authCookieName)
 	if err != nil {
 		return User{}, serr.Wrap(err)
@@ -469,7 +488,7 @@ func (a *App) pkCreateGet(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	options, sessionData, err := a.WebAuthN.BeginRegistration(user,
+	options, sessionData, err := a.wa.BeginRegistration(user,
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
 	)
 	if err != nil {
@@ -501,7 +520,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	credential, err := a.WebAuthN.CreateCredential(
+	credential, err := a.wa.CreateCredential(
 		user, sessionData, parsedResponse)
 	if err != nil {
 		return serr.Wrap(err)
@@ -539,7 +558,7 @@ func (a *App) validatePasskeyLogin(r *http.Request) (User, error) {
 		return User{}, serr.Wrap(err)
 	}
 
-	user, _, err := a.WebAuthN.ValidatePasskeyLogin(a.discoverUser, sessionData, parsedResponse)
+	user, _, err := a.wa.ValidatePasskeyLogin(a.discoverUser, sessionData, parsedResponse)
 	if err != nil {
 		return User{}, serr.Wrap(err)
 	}
@@ -547,7 +566,7 @@ func (a *App) validatePasskeyLogin(r *http.Request) (User, error) {
 }
 
 func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
-	credentialAssertion, sessionData, err := a.WebAuthN.BeginDiscoverableLogin()
+	credentialAssertion, sessionData, err := a.wa.BeginDiscoverableLogin()
 	if err != nil {
 		return serr.Wrap(err)
 	}
@@ -581,9 +600,9 @@ func (a *App) signOutPost(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.currentUser(r)
+	user, err := a.CurrentUser(r)
 	if err != nil {
-		if !isNotSignedInError(err) {
+		if !IsNotSignedInError(err) {
 			return err
 		}
 		return serr.Wrap(a.pageStd("Sign In",

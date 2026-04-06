@@ -4,7 +4,10 @@ package caddygate
 import (
 	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/caddyserver/caddy/v2"
@@ -34,7 +37,7 @@ func init() {
 }
 
 type Gate struct {
-	app map[string]app.App
+	app map[string]*app.App
 }
 
 // CaddyModule returns the Caddy module information.
@@ -52,12 +55,14 @@ func (g *Gate) Provision(ctx caddy.Context) error {
 type GateServe struct {
 	Name   string     `json:"name,omitempty"`
 	Config app.Config `json:"config"`
+
+	app *app.App
 }
 
 // CaddyModule returns the Caddy module information.
 func (*GateServe) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.gate.serve",
+		ID:  "http.handlers.gate-serve",
 		New: func() caddy.Module { return new(GateServe) },
 	}
 }
@@ -101,6 +106,25 @@ func (g *GateServe) Provision(ctx caddy.Context) error {
 	if gate == nil {
 		return fmt.Errorf("%s app is nil", appID)
 	}
+
+	if _, found := gate.app[g.Name]; found {
+		if g.Name == "" {
+			return fmt.Errorf("default gate serve redefined")
+		} else {
+			return fmt.Errorf("named gate serve %q redefined", g.Name)
+		}
+	}
+
+	g.app, err = app.NewApp(g.Config)
+	if err != nil {
+		return err
+	}
+
+	if gate.app == nil {
+		gate.app = make(map[string]*app.App)
+	}
+	gate.app[g.Name] = g.app
+
 	return nil
 }
 
@@ -111,18 +135,26 @@ func (g *GateServe) Validate() error {
 
 // ServeHTTP serves the Gate UI.
 func (g *GateServe) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
-	panic("unimplemented")
+	g.app.ServeHTTP(w, r)
+	return nil
+	// // TODO
+	// io.WriteString(w, "hello from gate serve\n")
+	// return nil
 }
 
 type GateGuard struct {
 	Name string   `json:"name,omitempty"`
 	Tags []string `json:"tags,omitempty"`
+
+	g *Gate
+	a *app.App
+	o sync.Once
 }
 
 // CaddyModule returns the Caddy module information.
 func (*GateGuard) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.handlers.gate.guard",
+		ID:  "http.handlers.gate-guard",
 		New: func() caddy.Module { return new(GateGuard) },
 	}
 }
@@ -166,8 +198,8 @@ func (g *GateGuard) Provision(ctx caddy.Context) error {
 		return err
 	}
 
-	gate := appModule.(*Gate)
-	if gate == nil {
+	g.g = appModule.(*Gate)
+	if g.g == nil {
 		return fmt.Errorf("%s app is nil", appID)
 	}
 	return nil
@@ -178,9 +210,39 @@ func (g *GateGuard) Validate() error {
 	return nil
 }
 
+func (g *GateGuard) notAuthorized(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusUnauthorized)
+	io.WriteString(w, "not authorized")
+}
+
 // ServeHTTP serves the Gate UI.
-func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
-	panic("unimplemented")
+func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	g.o.Do(func() {
+		g.a = g.g.app[g.Name]
+	})
+	if g.a == nil {
+		if g.Name == "" {
+			return fmt.Errorf("default gate guard used without defining associated default serve")
+		} else {
+			return fmt.Errorf("named gate guard %q used without defining associated named serve", g.Name)
+		}
+	}
+	u, err := g.a.CurrentUser(r)
+	if err != nil {
+		if app.IsNotSignedInError(err) {
+			g.notAuthorized(w)
+			return nil
+		} else {
+			return err
+		}
+	}
+	for _, tag := range g.Tags {
+		if !slices.Contains(u.Tags, tag) {
+			g.notAuthorized(w)
+			return nil
+		}
+	}
+	return next.ServeHTTP(w, r)
 }
 
 func nextArgString(dest *string, d *caddyfile.Dispenser) error {

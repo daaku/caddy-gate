@@ -10,7 +10,6 @@ import (
 	"github.com/daaku/caddygate/app"
 	"github.com/daaku/lands"
 	"github.com/daaku/serr"
-	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func must[T any](t T, err error) T {
@@ -29,16 +28,13 @@ func run(ctx context.Context) error {
 			{ID: "naitik", Name: "Naitik", Tags: []string{"admin"}},
 			{ID: "shweta", Name: "Shweta"},
 		},
+		RP: app.RelyingParty{
+			ID:          cmp.Or(os.Getenv("RPID"), "localhost"),
+			DisplayName: "Caddy Gate Demo",
+			Origins:     []string{cmp.Or(os.Getenv("ORIGIN"), "https://localhost:8080")},
+		},
 	}
-	wa, err := webauthn.New(&webauthn.Config{
-		RPID:          cmp.Or(os.Getenv("RPID"), "localhost"),
-		RPDisplayName: "Caddy Gate Demo",
-		RPOrigins:     []string{cmp.Or(os.Getenv("ORIGIN"), "https://localhost:8080")},
-	})
-	if err != nil {
-		return serr.Wrap(err)
-	}
-	app, err := app.NewApp(config, wa)
+	app, err := app.NewApp(config)
 	if err != nil {
 		return err
 	}

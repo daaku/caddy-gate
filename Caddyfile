@@ -1,13 +1,23 @@
 {
 	admin off
 	auto_https disable_redirects
+	https_port 4430
 }
 
-auth.internal {
-	tls internal
+auth.caddygate {
+	tls {
+		issuer internal {
+			sign_with_root
+		}
+	}
 	gate {
-		data_dir /etc/caddy/gate/example.com
+		data_dir {$HOME}/.local/share/caddy/gate/example.com
 		cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+		rp {
+			id auth.caddygate
+			display_name "Caddygate Demo"
+			origin https://auth.caddygate:4430
+		}
 		users {
 			zaphod "Zaphod" admin
 			trillian "Trillan" admin
@@ -16,12 +26,13 @@ auth.internal {
 	}
 }
 
-admin.internal {
+admin.caddygate {
 	tls internal
-	gate / admin
+	# gate / admin
 }
 
-home.internal {
+home.caddygate {
 	tls internal
 	gate
+	respond "Welcome, you were successfully authorized."
 }
