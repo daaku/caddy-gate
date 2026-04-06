@@ -88,7 +88,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 				cookie_name_prefix foo
 				cookie_path /foo
 				cookie_secret "` + cookieSecretB64 + `"
-				cookie_ttl 30h
+				cookie_ttl 30d
 				invite_ttl 24h
 				rp {
 					id example.com
@@ -110,7 +110,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 					CookieDomain:     "foo.com",
 					CookieNamePrefix: "foo",
 					CookiePath:       "/foo",
-					CookieTTL:        time.Hour * 30,
+					CookieTTL:        time.Hour * 24 * 30,
 					CookieSecret:     cookieSecret,
 					InviteTTL:        time.Hour * 24,
 					RP: app.RelyingParty{

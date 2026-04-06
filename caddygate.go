@@ -207,9 +207,9 @@ func nextArgDuration(dest *time.Duration, d *caddyfile.Dispenser) error {
 	if !d.NextArg() {
 		return d.ArgErr()
 	}
-	v, err := time.ParseDuration(d.Token().Text)
+	v, err := caddy.ParseDuration(d.Token().Text)
 	if err != nil {
-		return d.Errf("invalid base64 URL encoded string: %s", d.Token().Text)
+		return d.Errf("invalid duration string: %s", d.Token().Text)
 	}
 	*dest = v
 	return nil
