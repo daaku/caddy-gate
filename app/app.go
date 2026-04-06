@@ -48,32 +48,32 @@ func maxAge(d time.Duration) int {
 }
 
 type RelyingParty struct {
-	ID          string   `json:"id"`
-	DisplayName string   `json:"displayName"`
-	Origins     []string `json:"origins"`
+	ID          string   `json:"id,omitempty"`
+	DisplayName string   `json:"displayName,omitempty"`
+	Origins     []string `json:"origins,omitempty"`
 }
 
 type Config struct {
-	DataDir          string        `json:"dataDir"`
-	CookieSecret     []byte        `json:"cookieSecret"`
-	CookieDomain     string        `json:"cookieDomain"`
-	CookiePath       string        `json:"cookiePath"`
-	CookieNamePrefix string        `json:"cookieNamePrefix"`
-	CookieTTL        time.Duration `json:"cookieTTL"`
-	InviteTTL        time.Duration `json:"inviteTTL"`
-	AuthBaseURL      string        `json:"authBaseURL"`
+	DataDir          string        `json:"dataDir,omitempty"`
+	CookieSecret     []byte        `json:"cookieSecret,omitempty"`
+	CookieDomain     string        `json:"cookieDomain,omitempty"`
+	CookiePath       string        `json:"cookiePath,omitempty"`
+	CookieNamePrefix string        `json:"cookieNamePrefix,omitempty"`
+	CookieTTL        time.Duration `json:"cookieTTL,omitempty"`
+	InviteTTL        time.Duration `json:"inviteTTL,omitempty"`
+	AuthBaseURL      string        `json:"authBaseURL,omitempty"`
 	RP               RelyingParty  `json:"rp"`
-	Users            []User        `json:"users"`
+	Users            []User        `json:"users,omitempty"`
 }
 
 type User struct {
-	ID   string   `json:"id"`
-	Name string   `json:"name"`
-	Tags []string `json:"tags"`
+	ID   string   `json:"id,omitempty"`
+	Name string   `json:"name,omitempty"`
+	Tags []string `json:"tags,omitempty"`
 }
 
 type UserCredential struct {
-	UserID     string              `json:"userID"`
+	UserID     string              `json:"userID,omitempty"`
 	Credential webauthn.Credential `json:"credential"`
 }
 
