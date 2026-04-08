@@ -79,11 +79,12 @@ func (*GateServe) CaddyModule() caddy.ModuleInfo {
 }
 
 func (g *GateServe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	d.Next()
 	// gate serve {block}
 	// gate serve named {block}
 	switch d.Token().Text {
 	default:
-		return d.Errf("unexpected %q", d.Token().Text)
+		return d.Errf("unexpected gate serve token: %q", d.Token().Text)
 	case sServe:
 		if !d.NextArg() {
 			return d.Err("must specify name after gate serve")
@@ -174,9 +175,10 @@ func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
 	// gate / {tags}
 	// gate guard named
 	// gate guard named / {tags}
+	h.Next()
 	switch h.Token().Text {
 	default:
-		return h.Errf("unexpected %q", h.Token().Text)
+		return h.Errf("unexpected gate guard token: %q", h.Token().Text)
 	case sSlash:
 		g.Tags = h.RemainingArgs()
 		if len(g.Tags) == 0 {
@@ -357,43 +359,39 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 }
 
 func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-	h.Next() // consume "gate"
+	segment := h.NextSegment()
+	segment = segment[2:] // consume empty start token and "gate"
 
-	// look for immediate block to trigger serve for default config
-	var foundImmediateBlock bool
-	var c app.Config
-	for nesting := h.Nesting(); h.NextBlock(nesting); {
-		foundImmediateBlock = true
-		if err := unmarshalAppConfigLine(&c, h.Dispenser); err != nil {
-			return nil, err
-		}
-	}
-	if foundImmediateBlock {
-		return &GateServe{Config: c}, nil
-	}
-
-	// bare "gate", implicit guard with default config
-	if !h.NextArg() {
-		return &GateGuard{}, nil
-	}
-
-	switch h.Token().Text {
+	d := caddyfile.NewDispenser(segment)
+	switch segment.Directive() {
 	default:
-		return nil, h.Errf("unexpected token %q", h.Token().Text)
+		return nil, d.Errf("unable to identify serve or guard with: %q", d.Token().Text)
+	case "":
+		// bare "gate", guard with default config
+		return &GateGuard{}, nil
+	case "{":
+		// bare "serve block", serve with default config
+		var c app.Config
+		for nesting := d.Nesting(); d.NextBlock(nesting); {
+			if err := unmarshalAppConfigLine(&c, d); err != nil {
+				return nil, err
+			}
+		}
+		return &GateServe{Config: c}, nil
 	case sGuard, sSlash:
 		// gate / {tags}
-		// gate guard named
-		// gate guard named / {tags}
+		// gate guard {named}
+		// gate guard {named} / {tags}
 		var g GateGuard
-		if err := g.UnmarshalCaddyfile(h.Dispenser); err != nil {
+		if err := g.UnmarshalCaddyfile(d); err != nil {
 			return nil, err
 		}
 		return &g, nil
 	case sServe:
 		// gate {block}
-		// gate serve named {block}
+		// gate serve {named} {block}
 		var g GateServe
-		if err := g.UnmarshalCaddyfile(h.Dispenser); err != nil {
+		if err := g.UnmarshalCaddyfile(d); err != nil {
 			return nil, err
 		}
 		return &g, nil
