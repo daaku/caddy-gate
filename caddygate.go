@@ -48,6 +48,17 @@ func (*Gate) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
+// Start and Stop causes us to implement `caddy.App` and ensures our instance
+// gets cached on `ctx.App` use, which is required for `GateGuard` to access
+// `GateServe` configuration.
+func (g *Gate) Start() error {
+	return nil
+}
+
+func (g *Gate) Stop() error {
+	return nil
+}
+
 func (g *Gate) Provision(ctx caddy.Context) error {
 	return nil
 }
