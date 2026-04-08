@@ -320,12 +320,12 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 			var u app.User
 			for i, token := range segment {
 				switch i {
-				default:
-					u.Tags = append(u.Tags, token.Text)
 				case 0:
 					u.ID = token.Text
 				case 1:
 					u.Name = token.Text
+				default:
+					u.Tags = append(u.Tags, token.Text)
 				}
 			}
 			c.Users = append(c.Users, u)
