@@ -33,12 +33,12 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 		},
 		{
 			"default gate guard with single tag",
-			`gate / admin`,
+			`gate with admin`,
 			&GateGuard{Tags: []string{"admin"}},
 		},
 		{
 			"default gate guard with multiple tags",
-			`gate / admin crew`,
+			`gate with admin crew`,
 			&GateGuard{Tags: []string{"admin", "crew"}},
 		},
 		{
@@ -48,7 +48,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 		},
 		{
 			"named gate guard with single tag",
-			`gate guard example.com / admin`,
+			`gate guard example.com with admin`,
 			&GateGuard{
 				Name: "example.com",
 				Tags: []string{"admin"},
@@ -56,7 +56,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 		},
 		{
 			"named gate guard with multiple tags",
-			`gate guard example.com / admin crew`,
+			`gate guard example.com with admin crew`,
 			&GateGuard{
 				Name: "example.com",
 				Tags: []string{"admin", "crew"},
@@ -157,13 +157,13 @@ func TestErrorParseCaddyfile(t *testing.T) {
 			"must specify name",
 		},
 		{
-			"default gate with slash and no tags",
-			`gate /`,
+			"default gate with and no tags",
+			`gate with`,
 			"must specify tags",
 		},
 		{
-			"named gate with slash and no tags",
-			`gate guard example.com /`,
+			"named gate with with and no tags",
+			`gate guard example.com with`,
 			"must specify tags",
 		},
 	}

@@ -25,7 +25,7 @@ const (
 	sGate  = "gate"
 	sServe = "serve"
 	sGuard = "guard"
-	sSlash = "/"
+	sWith  = "with"
 )
 
 func init() {
@@ -179,10 +179,10 @@ func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
 	switch h.Token().Text {
 	default:
 		return h.Errf("unexpected gate guard token: %q", h.Token().Text)
-	case sSlash:
+	case sWith:
 		g.Tags = h.RemainingArgs()
 		if len(g.Tags) == 0 {
-			return h.Err("must specify tags after slash")
+			return h.Err("must specify tags after with")
 		}
 	case sGuard:
 		if !h.NextArg() {
@@ -190,14 +190,14 @@ func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
 		}
 		g.Name = h.Token().Text
 
-		// if next arg, must be slash + tags
+		// if next arg, must be with + tags
 		if h.NextArg() {
-			if h.Token().Text != sSlash {
-				return h.Errf("expected slash and tags but got %q", h.Token().Text)
+			if h.Token().Text != sWith {
+				return h.Errf("expected with and tags but got %q", h.Token().Text)
 			}
 			g.Tags = h.RemainingArgs()
 			if len(g.Tags) == 0 {
-				return h.Err("must specify tags after slash")
+				return h.Err("must specify tags after with")
 			}
 		}
 	}
@@ -378,7 +378,7 @@ func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error)
 			}
 		}
 		return &GateServe{Config: c}, nil
-	case sGuard, sSlash:
+	case sGuard, sWith:
 		// gate / {tags}
 		// gate guard {named}
 		// gate guard {named} / {tags}

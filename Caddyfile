@@ -16,7 +16,7 @@ auth.caddygate.com {
 		}
 		users {
 			zaphod "Zaphod" admin
-			trillian "Trillan" admin
+			trillian "Trillan" admin audit
 			marvin
 		}
 	}
@@ -24,8 +24,14 @@ auth.caddygate.com {
 
 admin.caddygate.com {
 	tls internal
-	# gate / admin
+	gate with admin
 	respond "Welcome admin, you were successfully authorized."
+}
+
+audit.caddygate.com {
+	tls internal
+	gate with audit
+	respond "Welcome audit, you were successfully authorized."
 }
 
 home.caddygate.com {
