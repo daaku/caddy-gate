@@ -5,7 +5,7 @@ It isn't a general purpose authentication/authorization module, but instead is
 suited for protecting resources for pre-configured users. Users are configured
 in `Caddyfile`, and passkeys are written to a JSON file. The idea being that the
 configured users, and their passkeys in the JSON file are managed much like any
-configuration files.
+other configuration file on your system.
 
 ## Users & Tags
 
@@ -56,7 +56,7 @@ auth.example.com {
 }
 
 admin.example.com {
-  gate / admin
+  gate with admin
 }
 
 logs.example.com {
@@ -88,7 +88,7 @@ auth.example.com {
 }
 
 admin.example.com {
-  gate guard example.com / admin
+  gate guard example.com with admin
 }
 
 logs.example.com {

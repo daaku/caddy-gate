@@ -363,7 +363,8 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 	}
 }
 
-// returns the current logged in user
+// CurrentUser returns the current logged in User.
+// Use IsNotSignedInError to check if the error indicates no signed in User.
 func (a *App) CurrentUser(r *http.Request) (User, error) {
 	userID, err := sookie.Get[string](a.Config.CookieSecret, r, a.authCookieName)
 	if err != nil {
