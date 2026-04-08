@@ -4,15 +4,15 @@
 	https_port 4430
 }
 
-auth.caddygate {
+auth.caddygate.com {
 	tls internal
 	gate {
-		data_dir {$HOME}/.local/share/caddy/gate/example.com
+		data_dir {$HOME}/.local/share/caddy/gate/caddygate.com
 		cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
 		rp {
-			id auth.caddygate
+			id caddygate.com
 			display_name "Caddygate Demo"
-			origin https://auth.caddygate:4430
+			origin https://auth.caddygate.com:4430
 		}
 		users {
 			zaphod "Zaphod" admin
@@ -22,13 +22,13 @@ auth.caddygate {
 	}
 }
 
-admin.caddygate {
+admin.caddygate.com {
 	tls internal
 	# gate / admin
 	respond "Welcome admin, you were successfully authorized."
 }
 
-home.caddygate {
+home.caddygate.com {
 	tls internal
 	gate
 	respond "Welcome user, you were successfully authorized."
