@@ -83,11 +83,11 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 			"gate named serve block",
 			`gate serve example.com {
 				data_dir /foo/bar
+				secret "` + cookieSecretB64 + `"
 				auth_base_url https://foo.com
 				cookie_domain foo.com
 				cookie_name_prefix foo
 				cookie_path /foo
-				cookie_secret "` + cookieSecretB64 + `"
 				cookie_ttl 30d
 				invite_ttl 24h
 				rp {
@@ -111,7 +111,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 					CookieNamePrefix: "foo",
 					CookiePath:       "/foo",
 					CookieTTL:        time.Hour * 24 * 30,
-					CookieSecret:     cookieSecret,
+					Secret:           cookieSecret,
 					InviteTTL:        time.Hour * 24,
 					RP: app.RelyingParty{
 						ID:          "example.com",

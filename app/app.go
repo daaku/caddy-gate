@@ -4,7 +4,9 @@ package app
 
 import (
 	"bytes"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
@@ -55,11 +57,11 @@ type RelyingParty struct {
 
 type Config struct {
 	DataDir          string        `json:"dataDir,omitempty"`
-	CookieSecret     []byte        `json:"cookieSecret,omitempty"`
 	CookieDomain     string        `json:"cookieDomain,omitempty"`
 	CookiePath       string        `json:"cookiePath,omitempty"`
 	CookieNamePrefix string        `json:"cookieNamePrefix,omitempty"`
 	CookieTTL        time.Duration `json:"cookieTTL,omitempty"`
+	Secret           []byte        `json:"secret,omitempty"`
 	InviteTTL        time.Duration `json:"inviteTTL,omitempty"`
 	AuthBaseURL      string        `json:"authBaseURL,omitempty"`
 	RP               RelyingParty  `json:"rp"`
@@ -225,6 +227,10 @@ func (s *inviteStore) Delete(inviteID string) error {
 type App struct {
 	Config Config
 
+	registerCookieSecret []byte
+	authCookieSecret     []byte
+	signInCookieSecret   []byte
+
 	wa                 *webauthn.WebAuthn
 	keys               keyStore
 	invites            inviteStore
@@ -232,6 +238,14 @@ type App struct {
 	signInCookieName   string
 	authCookieName     string
 	handler            http.HandlerFunc
+}
+
+func hkdfExpand(key []byte, info string) []byte {
+	derived, err := hkdf.Expand(sha256.New, key, info, 32)
+	if err != nil {
+		panic(err)
+	}
+	return derived
 }
 
 func NewApp(c Config) (*App, error) {
@@ -262,13 +276,19 @@ func NewApp(c Config) (*App, error) {
 	if c.CookieNamePrefix == "" {
 		c.CookieNamePrefix = "gate-"
 	}
+	if len(c.Secret) != 32 {
+		return nil, serr.Errorf("must provide a secret of length 32")
+	}
 
 	a := &App{
-		Config:             c,
-		wa:                 wa,
-		registerCookieName: c.CookieNamePrefix + "r",
-		signInCookieName:   c.CookieNamePrefix + "l",
-		authCookieName:     c.CookieNamePrefix + "a",
+		Config:               c,
+		wa:                   wa,
+		registerCookieName:   c.CookieNamePrefix + "r",
+		signInCookieName:     c.CookieNamePrefix + "l",
+		authCookieName:       c.CookieNamePrefix + "a",
+		registerCookieSecret: hkdfExpand(c.Secret, "registerCookie"),
+		authCookieSecret:     hkdfExpand(c.Secret, "authCookie"),
+		signInCookieSecret:   hkdfExpand(c.Secret, "signInCookie"),
 	}
 	a.invites.ttl = a.Config.InviteTTL
 
@@ -366,7 +386,7 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 // CurrentUser returns the current logged in User.
 // Use IsNotSignedInError to check if the error indicates no signed in User.
 func (a *App) CurrentUser(r *http.Request) (User, error) {
-	userID, err := sookie.Get[string](a.Config.CookieSecret, r, a.authCookieName)
+	userID, err := sookie.Get[string](a.authCookieSecret, r, a.authCookieName)
 	if err != nil {
 		return User{}, serr.Wrap(err)
 	}
@@ -496,7 +516,7 @@ func (a *App) pkCreateGet(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	sookie.Set(a.Config.CookieSecret, w, sessionData, a.registerCookie())
+	sookie.Set(a.registerCookieSecret, w, sessionData, a.registerCookie())
 	return serr.Wrap(json.NewEncoder(w).Encode(options))
 }
 
@@ -509,7 +529,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	sessionData, err := sookie.Get[webauthn.SessionData](
-		a.Config.CookieSecret, r, a.registerCookieName)
+		a.registerCookieSecret, r, a.registerCookieName)
 	if err != nil {
 		return serr.Wrap(err)
 	}
@@ -535,7 +555,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := sookie.Set(a.Config.CookieSecret, w, user.user.ID, a.authCookie()); err != nil {
+	if err := sookie.Set(a.authCookieSecret, w, user.user.ID, a.authCookie()); err != nil {
 		return serr.Wrap(err)
 	}
 
@@ -548,7 +568,7 @@ const pPkGet = "/pk-get"
 
 func (a *App) validatePasskeyLogin(r *http.Request) (User, error) {
 	sessionData, err := sookie.Get[webauthn.SessionData](
-		a.Config.CookieSecret, r, a.signInCookieName)
+		a.signInCookieSecret, r, a.signInCookieName)
 	if err != nil {
 		return User{}, serr.Wrap(err)
 	}
@@ -571,7 +591,7 @@ func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return serr.Wrap(err)
 	}
-	if err := sookie.Set(a.Config.CookieSecret, w, sessionData, a.signInCookie()); err != nil {
+	if err := sookie.Set(a.signInCookieSecret, w, sessionData, a.signInCookie()); err != nil {
 		return serr.Wrap(err)
 	}
 	return serr.Wrap(json.NewEncoder(w).Encode(credentialAssertion))
@@ -583,7 +603,7 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := sookie.Set(a.Config.CookieSecret, w, user.ID, a.authCookie()); err != nil {
+	if err := sookie.Set(a.authCookieSecret, w, user.ID, a.authCookie()); err != nil {
 		return serr.Wrap(err)
 	}
 

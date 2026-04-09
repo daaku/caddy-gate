@@ -39,14 +39,14 @@ Required configuration:
 - `data_dir`, a writable directory to store the data. Currently only contains
   a `keys.json` file containing the passkeys added over time. A directory is
   used to enable atomically replacing the file rather than updating it in place.
-- `cookie_secret`, a secret used to encrypted/sign cookies.
+- `secret`, a secret used to encrypted/sign cookies and parameters.
 - `users`, configure users.
 
 ```Caddyfile
 auth.example.com {
   gate {
     data_dir /etc/caddy/gate/example.com
-    cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+    secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     users {
       zaphod "Zaphod" admin
       trillian "Trillan" admin
@@ -70,7 +70,7 @@ logs.example.com {
 auth.example.com {
   gate serve example.com {
     data_dir /etc/caddy/gate/example.com
-    cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+    secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
     cookie_domain example.com
     cookie_ttl 30d
     auth_base_url https://auth.example.com

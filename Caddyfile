@@ -8,7 +8,7 @@ auth.caddygate.com {
 	tls internal
 	gate {
 		data_dir {$HOME}/.local/share/caddy/gate/caddygate.com
-		cookie_secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+		secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
 		rp {
 			id caddygate.com
 			display_name "Caddygate Demo"

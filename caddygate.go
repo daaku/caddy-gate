@@ -338,6 +338,8 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 				return err
 			}
 		}
+	case "secret":
+		err = nextArgB64URL(&c.Secret, d)
 	case "auth_base_url":
 		err = nextArgString(&c.AuthBaseURL, d)
 	case "cookie_domain":
@@ -348,8 +350,6 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 		err = nextArgString(&c.CookiePath, d)
 	case "data_dir":
 		err = nextArgString(&c.DataDir, d)
-	case "cookie_secret":
-		err = nextArgB64URL(&c.CookieSecret, d)
 	case "cookie_ttl":
 		err = nextArgDuration(&c.CookieTTL, d)
 	case "invite_ttl":
