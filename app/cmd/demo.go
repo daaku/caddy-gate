@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/daaku/caddygate/app"
+	"github.com/daaku/caddy-gate/app"
 	"github.com/daaku/lands"
 	"github.com/daaku/serr"
 )

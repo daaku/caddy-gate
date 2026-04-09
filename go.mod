@@ -1,4 +1,4 @@
-module github.com/daaku/caddygate
+module github.com/daaku/caddy-gate
 
 go 1.26.1
 
