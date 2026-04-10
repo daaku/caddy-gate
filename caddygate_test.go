@@ -85,6 +85,8 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 				data_dir /foo/bar
 				secret "` + cookieSecretB64 + `"
 				auth_base_url https://foo.com
+				sign_in_url https://auth.foo.com
+				default_next https://admin.foo.com
 				cookie_domain foo.com
 				cookie_name_prefix foo
 				cookie_path /foo
@@ -106,12 +108,14 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 				Name: "example.com",
 				Config: app.Config{
 					DataDir:          "/foo/bar",
+					Secret:           cookieSecret,
 					AuthBaseURL:      "https://foo.com",
+					SignInURL:        "https://auth.foo.com",
+					DefaultNext:      "https://admin.foo.com",
 					CookieDomain:     "foo.com",
 					CookieNamePrefix: "foo",
 					CookiePath:       "/foo",
 					CookieTTL:        time.Hour * 24 * 30,
-					Secret:           cookieSecret,
 					InviteTTL:        time.Hour * 24,
 					RP: app.RelyingParty{
 						ID:          "example.com",
@@ -152,6 +156,76 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 func TestErrorParseCaddyfile(t *testing.T) {
 	cases := []struct{ name, input, err string }{
 		{
+			"gate foo",
+			`gate foo`,
+			"unable to identify serve or guard",
+		},
+		{
+			"gate serve with missing name",
+			`gate serve`,
+			"must specify name",
+		},
+		{
+			"gate invalid default serve option",
+			`gate {
+				foo bar
+			}`,
+			"unexpected option in serve block",
+		},
+		{
+			"gate invalid default serve rp option",
+			`gate {
+				rp {
+					foo bar
+				}
+			}`,
+			"unexpected option in rp block",
+		},
+		{
+			"gate invalid default missing origin value",
+			`gate {
+				rp {
+					origin
+				}
+			}`,
+			"wrong argument count",
+		},
+		{
+			"gate invalid default serve missing ttl",
+			`gate {
+				cookie_ttl
+			}`,
+			"wrong argument count",
+		},
+		{
+			"gate invalid default serve ttl",
+			`gate {
+				cookie_ttl 1f
+			}`,
+			"invalid duration string",
+		},
+		{
+			"gate invalid default serve missing b64",
+			`gate {
+				secret
+			}`,
+			"wrong argument count",
+		},
+		{
+			"gate invalid default serve b64",
+			`gate {
+				secret "$"
+			}`,
+			"invalid base64 URL encoded string",
+		},
+		{
+			"gate invalid default serve missing string",
+			`gate {
+				cookie_path
+			}`,
+			"wrong argument count",
+		},
+		{
 			"gate guard missing name",
 			`gate guard`,
 			"must specify name",
@@ -165,6 +239,11 @@ func TestErrorParseCaddyfile(t *testing.T) {
 			"named gate with with and no tags",
 			`gate guard example.com with`,
 			"must specify tags",
+		},
+		{
+			"gate guard with missing name",
+			`gate guard`,
+			"must specify name",
 		},
 	}
 	for _, c := range cases {
