@@ -62,10 +62,6 @@ func (g *Gate) Stop() error {
 	return nil
 }
 
-func (g *Gate) Provision(ctx caddy.Context) error {
-	return nil
-}
-
 type GateServe struct {
 	Name   string     `json:"name,omitempty"`
 	Config app.Config `json:"config"`
