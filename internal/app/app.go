@@ -644,7 +644,6 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 	var nextURL string
 	if givenNext := r.FormValue(inputNext); givenNext != "" {
 		nextURL, err = a.OpenNextURL(givenNext)
-		println("open", nextURL)
 		if err != nil {
 			log.Println(err)
 		}
