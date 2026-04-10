@@ -317,9 +317,6 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 	case "users":
 		for nesting := d.Nesting(); d.NextBlock(nesting); {
 			segment := d.NextSegment()
-			if len(segment) == 0 {
-				continue // empty line
-			}
 			var u app.User
 			for i, token := range segment {
 				switch i {
