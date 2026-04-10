@@ -175,3 +175,8 @@ func TestErrorParseCaddyfile(t *testing.T) {
 		})
 	}
 }
+
+func TestGateAppStartStop(t *testing.T) {
+	ensure.Nil(t, (&Gate{}).Start())
+	ensure.Nil(t, (&Gate{}).Stop())
+}
