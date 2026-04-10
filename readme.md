@@ -96,8 +96,8 @@ logs.example.com {
 }
 ```
 
-### Generate Cookie Secret
+### Generate Secret
 
 ```sh
-dd if=/dev/random bs=32 count=1 2>/dev/null | base64 | tr '+/' '-_' | tr -d '='
+head -c32 /dev/random | base64 | tr '+/' '-_' | tr -d '='
 ```
