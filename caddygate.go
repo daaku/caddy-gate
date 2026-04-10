@@ -139,11 +139,6 @@ func (g *GateServe) Provision(ctx caddy.Context) error {
 	return nil
 }
 
-// Validate implements caddy.Validator.
-func (g *GateServe) Validate() error {
-	return nil
-}
-
 // ServeHTTP serves the Gate UI.
 func (g *GateServe) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	g.app.ServeHTTP(w, r)
@@ -227,11 +222,6 @@ func (g *GateGuard) IsAllowed(u app.User) bool {
 		}
 	}
 	return false
-}
-
-// Validate implements caddy.Validator.
-func (g *GateGuard) Validate() error {
-	return nil
 }
 
 // ServeHTTP serves the Gate UI.
