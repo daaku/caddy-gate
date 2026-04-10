@@ -248,13 +248,13 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		http.Redirect(w, r, signInURL, http.StatusSeeOther)
 		return nil
 	}
+	if err != nil {
+		return err
+	}
 	if !g.IsAllowed(u) {
 		w.WriteHeader(http.StatusUnauthorized)
 		io.WriteString(w, "You are logged in, but not allowed to access this.")
 		return nil
-	}
-	if err != nil {
-		return err
 	}
 	return next.ServeHTTP(w, r)
 }
