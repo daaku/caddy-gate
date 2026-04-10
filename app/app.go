@@ -251,6 +251,19 @@ func hkdfExpand(key []byte, info string) []byte {
 	return derived
 }
 
+func secureHandler(h http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+		w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-site")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "deny")
+		w.Header().Set("X-Permitted-Cross-Domain-Policies", "none")
+		h.ServeHTTP(w, r)
+	}
+}
+
 func NewApp(c Config) (*App, error) {
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          c.RP.ID,
@@ -323,7 +336,9 @@ func NewApp(c Config) (*App, error) {
 		}
 	}
 
-	m := http.NewCrossOriginProtection().Handler(a.mux())
+	var m http.Handler = a.mux()
+	m = http.NewCrossOriginProtection().Handler(m)
+	m = secureHandler(m)
 	a.handler = m.ServeHTTP
 
 	return a, nil
