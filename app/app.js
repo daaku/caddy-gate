@@ -25,19 +25,9 @@ document.querySelectorAll('[data-pk-create]').forEach(el => {
 })
 
 document.querySelectorAll('[data-pk-get]').forEach(el => {
-  el.addEventListener('click', async () => {
-    const url = el.dataset.pkGet
-    const { publicKey } = await (await fetch(url)).json()
-    publicKey.challenge = Uint8Array.fromBase64(publicKey.challenge, b64url)
-    const getResponse = await navigator.credentials.get({ publicKey })
-    jsonForm(url, getResponse)
-  })
-})
-
-document.querySelectorAll('[data-pk-verify]').forEach(el => {
   el.addEventListener('click', async ev => {
     ev.preventDefault()
-    const url = el.dataset.pkVerify
+    const url = el.dataset.pkGet
     const { publicKey } = await (await fetch(url)).json()
     publicKey.challenge = Uint8Array.fromBase64(publicKey.challenge, b64url)
     const getResponse = await navigator.credentials.get({ publicKey })

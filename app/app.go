@@ -64,6 +64,8 @@ type Config struct {
 	Secret           []byte        `json:"secret,omitempty"`
 	InviteTTL        time.Duration `json:"inviteTTL,omitempty"`
 	AuthBaseURL      string        `json:"authBaseURL,omitempty"`
+	SignInURL        string        `json:"signInURL,omitempty"`
+	DefaultNext      string        `json:"defaultNext,omitempty"`
 	RP               RelyingParty  `json:"rp"`
 	Users            []User        `json:"users,omitempty"`
 }
@@ -230,6 +232,7 @@ type App struct {
 	registerCookieSecret []byte
 	authCookieSecret     []byte
 	signInCookieSecret   []byte
+	nextSecret           []byte
 
 	wa                 *webauthn.WebAuthn
 	keys               keyStore
@@ -265,7 +268,13 @@ func NewApp(c Config) (*App, error) {
 		c.CookiePath = "/"
 	}
 	if c.CookieDomain == "" {
-		c.CookieDomain = wa.Config.GetRPID()
+		c.CookieDomain = wa.Config.RPID
+	}
+	if c.SignInURL == "" {
+		c.SignInURL = wa.Config.RPOrigins[0]
+	}
+	if c.DefaultNext == "" {
+		c.DefaultNext = "/"
 	}
 	if c.InviteTTL == 0 {
 		c.InviteTTL = time.Hour
@@ -289,6 +298,7 @@ func NewApp(c Config) (*App, error) {
 		registerCookieSecret: hkdfExpand(c.Secret, "registerCookie"),
 		authCookieSecret:     hkdfExpand(c.Secret, "authCookie"),
 		signInCookieSecret:   hkdfExpand(c.Secret, "signInCookie"),
+		nextSecret:           hkdfExpand(c.Secret, "next"),
 	}
 	a.invites.ttl = a.Config.InviteTTL
 
@@ -391,6 +401,14 @@ func (a *App) CurrentUser(r *http.Request) (User, error) {
 		return User{}, serr.Wrap(err)
 	}
 	return a.userByID(userID)
+}
+
+func (a *App) SealNextURL(u string) (string, error) {
+	return sookie.Seal(a.nextSecret, time.Now().Add(time.Hour*24), u)
+}
+
+func (a *App) OpenNextURL(u string) (string, error) {
+	return sookie.Open[string](a.nextSecret, u)
 }
 
 const pInvite = "/invite"
@@ -559,8 +577,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	// TODO configurable default redirect
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	http.Redirect(w, r, a.Config.DefaultNext, http.StatusSeeOther)
 	return nil
 }
 
@@ -597,6 +614,8 @@ func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
 	return serr.Wrap(json.NewEncoder(w).Encode(credentialAssertion))
 }
 
+const inputNext = "next"
+
 func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 	user, err := a.validatePasskeyLogin(r)
 	if err != nil {
@@ -607,8 +626,20 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	// TODO configured allowed redirect via cookie
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+	var nextURL string
+	if givenNext := r.FormValue(inputNext); givenNext != "" {
+		nextURL, err = a.OpenNextURL(givenNext)
+		println("open", nextURL)
+		if err != nil {
+			log.Println(err)
+		}
+
+	}
+	if nextURL == "" {
+		nextURL = a.Config.DefaultNext
+	}
+
+	http.Redirect(w, r, nextURL, http.StatusSeeOther)
 	return nil
 }
 
@@ -627,7 +658,12 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		return serr.Wrap(a.pageStd("Sign In",
-			h.Button(h.Data("pk-get", pPkGet), g.Text("Sign In")),
+			h.Form(h.Action(pPkGet),
+				h.Method(http.MethodPost),
+				h.Input(h.Type("hidden"), h.Name(inputNext), h.Value(r.FormValue("next"))),
+				h.Input(h.Type("hidden"), h.Name(inputJSON)),
+				h.Input(h.Data("pk-get", pPkGet), h.Type("submit"), h.Value("Sign In")),
+			),
 		).Render(w))
 	} else {
 		var inviteForm g.Node
@@ -639,8 +675,8 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 					g.Map(a.Config.Users, func(u User) g.Node {
 						return h.Option(h.Value(u.ID), g.Text(u.Name))
 					})),
-				h.Input(h.Type("hidden"), h.Name("json")),
-				h.Input(h.Data("pk-verify", pPkGet), h.Type("submit"), h.Value("Create")),
+				h.Input(h.Type("hidden"), h.Name(inputJSON)),
+				h.Input(h.Data("pk-get", pPkGet), h.Type("submit"), h.Value("Create")),
 			)
 		}
 		return serr.Wrap(a.pageStd("Welcome back",

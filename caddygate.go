@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -218,14 +219,21 @@ func (g *GateGuard) Provision(ctx caddy.Context) error {
 	return nil
 }
 
+func (g *GateGuard) IsAllowed(u app.User) bool {
+	if len(g.Tags) == 0 { // no tags required, any user ok
+		return true
+	}
+	for _, tag := range g.Tags {
+		if slices.Contains(u.Tags, tag) {
+			return true
+		}
+	}
+	return false
+}
+
 // Validate implements caddy.Validator.
 func (g *GateGuard) Validate() error {
 	return nil
-}
-
-func (g *GateGuard) notAuthorized(w http.ResponseWriter) {
-	w.WriteHeader(http.StatusUnauthorized)
-	io.WriteString(w, "not authorized")
 }
 
 // ServeHTTP serves the Gate UI.
@@ -241,19 +249,27 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		}
 	}
 	u, err := g.a.CurrentUser(r)
-	if err != nil {
-		if app.IsNotSignedInError(err) {
-			g.notAuthorized(w)
-			return nil
-		} else {
-			return err
+	if app.IsNotSignedInError(err) {
+		scheme := r.URL.Scheme
+		if scheme == "" {
+			scheme = "https"
 		}
+		next, err := g.a.SealNextURL(fmt.Sprintf("%s://%s%s",
+			scheme, r.Host, r.URL.String()))
+		if err != nil {
+			return fmt.Errorf("unable to seal next url: %w", err)
+		}
+		signInURL := fmt.Sprintf("%s?next=%s", g.a.Config.SignInURL, url.QueryEscape(next))
+		http.Redirect(w, r, signInURL, http.StatusSeeOther)
+		return nil
 	}
-	for _, tag := range g.Tags {
-		if !slices.Contains(u.Tags, tag) {
-			g.notAuthorized(w)
-			return nil
-		}
+	if !g.IsAllowed(u) {
+		w.WriteHeader(http.StatusUnauthorized)
+		io.WriteString(w, "You are logged in, but not allowed to access this.")
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	return next.ServeHTTP(w, r)
 }
@@ -342,6 +358,10 @@ func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
 		err = nextArgB64URL(&c.Secret, d)
 	case "auth_base_url":
 		err = nextArgString(&c.AuthBaseURL, d)
+	case "sign_in_url":
+		err = nextArgString(&c.SignInURL, d)
+	case "default_next":
+		err = nextArgString(&c.DefaultNext, d)
 	case "cookie_domain":
 		err = nextArgString(&c.CookieDomain, d)
 	case "cookie_name_prefix":

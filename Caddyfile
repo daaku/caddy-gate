@@ -9,6 +9,8 @@ auth.caddygate.com {
 	gate {
 		data_dir {$HOME}/.local/share/caddy/gate/caddygate.com
 		secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+		sign_in_url https://auth.caddygate.com:4430
+		default_next https://home.caddygate.com:4430
 		rp {
 			id caddygate.com
 			display_name "Caddygate Demo"
