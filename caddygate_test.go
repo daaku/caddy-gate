@@ -3,6 +3,9 @@ package caddygate
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
+	"regexp"
 	"testing"
 	"time"
 
@@ -258,4 +261,48 @@ func TestErrorParseCaddyfile(t *testing.T) {
 func TestGateAppStartStop(t *testing.T) {
 	ensure.Nil(t, (&Gate{}).Start())
 	ensure.Nil(t, (&Gate{}).Stop())
+}
+
+func TestMissingAssociatedConfigDefault(t *testing.T) {
+	g := GateGuard{g: &Gate{}}
+	ensure.Err(t, g.ServeHTTP(nil, nil, nil),
+		regexp.MustCompile("default gate guard used without defining associated default serve"))
+}
+
+func TestMissingAssociatedConfigNamed(t *testing.T) {
+	g := GateGuard{Name: "foo", g: &Gate{}}
+	ensure.Err(t, g.ServeHTTP(nil, nil, nil),
+		regexp.MustCompile(`named gate guard "foo" used without defining associated named serve`))
+}
+
+func TestGateIsNotSignedIn(t *testing.T) {
+	secret := make([]byte, 32)
+	rand.Read(secret)
+
+	a, err := app.NewApp(app.Config{
+		DataDir: t.TempDir(),
+		Secret:  secret,
+		RP: app.RelyingParty{
+			ID:          "foo.com",
+			DisplayName: "Foo",
+			Origins:     []string{"https://foo.com"},
+		},
+		Users: []app.User{
+			{ID: "admin"},
+		},
+	})
+	ensure.Nil(t, err)
+
+	g := GateGuard{
+		g: &Gate{
+			app: map[string]*app.App{
+				"": a,
+			},
+		},
+	}
+	r := httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	ensure.Nil(t, g.ServeHTTP(w, r, nil))
+	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
+	ensure.StringContains(t, w.Header().Get("Location"), "https://foo.com?next=")
 }
