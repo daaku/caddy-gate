@@ -29,6 +29,8 @@ const (
 	sWith  = "with"
 )
 
+var _ caddy.App = (*Gate)(nil)
+
 func init() {
 	caddy.RegisterModule(&Gate{})
 	caddy.RegisterModule(&GateServe{})
