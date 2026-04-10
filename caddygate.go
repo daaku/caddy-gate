@@ -171,9 +171,9 @@ func (*GateGuard) CaddyModule() caddy.ModuleInfo {
 }
 
 func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
-	// gate / {tags}
-	// gate guard named
-	// gate guard named / {tags}
+	// gate with {tags}
+	// gate guard {named}
+	// gate guard {named} with {tags}
 	h.Next()
 	switch h.Token().Text {
 	default:
