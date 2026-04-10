@@ -143,9 +143,6 @@ func (g *GateServe) Provision(ctx caddy.Context) error {
 func (g *GateServe) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhttp.Handler) error {
 	g.app.ServeHTTP(w, r)
 	return nil
-	// // TODO
-	// io.WriteString(w, "hello from gate serve\n")
-	// return nil
 }
 
 type GateGuard struct {
