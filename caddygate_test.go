@@ -264,13 +264,13 @@ func TestGateAppStartStop(t *testing.T) {
 }
 
 func TestMissingAssociatedConfigDefault(t *testing.T) {
-	g := GateGuard{g: &Gate{}}
+	g := GateGuard{gate: &Gate{}}
 	ensure.Err(t, g.ServeHTTP(nil, nil, nil),
 		regexp.MustCompile("default gate guard used without defining associated default serve"))
 }
 
 func TestMissingAssociatedConfigNamed(t *testing.T) {
-	g := GateGuard{Name: "foo", g: &Gate{}}
+	g := GateGuard{Name: "foo", gate: &Gate{}}
 	ensure.Err(t, g.ServeHTTP(nil, nil, nil),
 		regexp.MustCompile(`named gate guard "foo" used without defining associated named serve`))
 }
@@ -287,7 +287,8 @@ func newValidApp(t testing.TB) *app.App {
 			Origins:     []string{"https://foo.com"},
 		},
 		Users: []app.User{
-			{ID: "admin"},
+			{ID: "zaphod", Tags: []string{"admin"}},
+			{ID: "marvin"},
 		},
 	})
 	ensure.Nil(t, err)
@@ -297,7 +298,7 @@ func newValidApp(t testing.TB) *app.App {
 func TestGateIsNotSignedIn(t *testing.T) {
 	a := newValidApp(t)
 	g := GateGuard{
-		g: &Gate{
+		gate: &Gate{
 			app: map[string]*app.App{
 				"": a,
 			},
