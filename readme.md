@@ -39,7 +39,7 @@ Required configuration:
 - `data_dir`, a writable directory to store the data. Currently only contains
   a `keys.json` file containing the passkeys added over time. A directory is
   used to enable atomically replacing the file rather than updating it in place.
-- `secret`, a secret used to encrypted/sign cookies and parameters.
+- `secret`, a secret used to encrypt/sign cookies and parameters.
 - `users`, configure users.
 
 ```Caddyfile

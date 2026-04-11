@@ -49,12 +49,15 @@ func maxAge(d time.Duration) int {
 	return int(d.Seconds())
 }
 
+// RelyingParty defines the WebAuthn Relying Party.
 type RelyingParty struct {
 	ID          string   `json:"id,omitempty"`
 	DisplayName string   `json:"displayName,omitempty"`
 	Origins     []string `json:"origins,omitempty"`
 }
 
+// Config defines the App config. This is typically instantiated by the
+// GateServe caddyfile directive.
 type Config struct {
 	DataDir          string        `json:"dataDir,omitempty"`
 	CookieDomain     string        `json:"cookieDomain,omitempty"`
@@ -70,14 +73,16 @@ type Config struct {
 	Users            []User        `json:"users,omitempty"`
 }
 
+// User defined in the Caddyfile.
 type User struct {
 	ID   string   `json:"id,omitempty"`
 	Name string   `json:"name,omitempty"`
 	Tags []string `json:"tags,omitempty"`
 }
 
+// UserCredential stored in the keys.json file in the data directory.
 type UserCredential struct {
-	UserID     string              `json:"userID,omitempty"`
+	UserID     string              `json:"userID"`
 	Credential webauthn.Credential `json:"credential"`
 }
 
@@ -92,12 +97,15 @@ func (u waUser) WebAuthnName() string                       { return u.user.ID }
 func (u waUser) WebAuthnDisplayName() string                { return u.user.Name }
 func (u waUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }
 
+// IsNotSignedInError returns true if the error indicates somehow that the user
+// is not signed in.
 func IsNotSignedInError(err error) bool {
 	return errors.Is(err, http.ErrNoCookie) ||
 		errors.Is(err, sookie.ErrExpired) ||
 		errors.Is(err, ErrUserNotFound)
 }
 
+// ErrUserNotFound indicates user was not found.
 var ErrUserNotFound = errors.New("user not found")
 
 type keyStore struct {
@@ -226,6 +234,7 @@ func (s *inviteStore) Delete(inviteID string) error {
 	return nil
 }
 
+// App provides the HTTP UI for caddygate.
 type App struct {
 	Config Config
 
@@ -264,6 +273,7 @@ func secureHandler(h http.Handler) http.HandlerFunc {
 	}
 }
 
+// NewApp validates the config, sets defaults and returns an functional App.
 func NewApp(c Config) (*App, error) {
 	wa, err := webauthn.New(&webauthn.Config{
 		RPID:          c.RP.ID,
@@ -418,10 +428,12 @@ func (a *App) CurrentUser(r *http.Request) (User, error) {
 	return a.userByID(userID)
 }
 
+// SealNextURL seals the URL for use as the next parameter in the sign-in flow.
 func (a *App) SealNextURL(u string) (string, error) {
 	return sookie.Seal(a.nextSecret, time.Now().Add(time.Hour*24), u)
 }
 
+// OpenNextURL opens the sealed URL from the next parameter in the sign-in flow.
 func (a *App) OpenNextURL(u string) (string, error) {
 	return sookie.Open[string](a.nextSecret, u)
 }
