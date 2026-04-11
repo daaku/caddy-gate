@@ -275,10 +275,9 @@ func TestMissingAssociatedConfigNamed(t *testing.T) {
 		regexp.MustCompile(`named gate guard "foo" used without defining associated named serve`))
 }
 
-func TestGateIsNotSignedIn(t *testing.T) {
+func newValidApp(t testing.TB) *app.App {
 	secret := make([]byte, 32)
 	rand.Read(secret)
-
 	a, err := app.NewApp(app.Config{
 		DataDir: t.TempDir(),
 		Secret:  secret,
@@ -292,7 +291,11 @@ func TestGateIsNotSignedIn(t *testing.T) {
 		},
 	})
 	ensure.Nil(t, err)
+	return a
+}
 
+func TestGateIsNotSignedIn(t *testing.T) {
+	a := newValidApp(t)
 	g := GateGuard{
 		g: &Gate{
 			app: map[string]*app.App{

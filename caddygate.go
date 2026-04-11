@@ -149,9 +149,9 @@ type GateGuard struct {
 	Name string   `json:"name,omitempty"`
 	Tags []string `json:"tags,omitempty"`
 
-	g *Gate
-	a *app.App
-	o sync.Once
+	gate *Gate
+	app  *app.App
+	once sync.Once
 }
 
 // CaddyModule returns the Caddy module information.
@@ -202,8 +202,8 @@ func (g *GateGuard) Provision(ctx caddy.Context) error {
 		return err
 	}
 
-	g.g = appModule.(*Gate)
-	if g.g == nil {
+	g.gate = appModule.(*Gate)
+	if g.gate == nil {
 		return fmt.Errorf("%s app is nil", appID)
 	}
 	return nil
@@ -223,28 +223,28 @@ func (g *GateGuard) IsAllowed(u app.User) bool {
 
 // ServeHTTP serves the Gate UI.
 func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
-	g.o.Do(func() {
-		g.a = g.g.app[g.Name]
+	g.once.Do(func() {
+		g.app = g.gate.app[g.Name]
 	})
-	if g.a == nil {
+	if g.app == nil {
 		if g.Name == "" {
 			return fmt.Errorf("default gate guard used without defining associated default serve")
 		} else {
 			return fmt.Errorf("named gate guard %q used without defining associated named serve", g.Name)
 		}
 	}
-	u, err := g.a.CurrentUser(r)
+	u, err := g.app.CurrentUser(r)
 	if app.IsNotSignedInError(err) {
 		scheme := r.URL.Scheme
 		if scheme == "" {
 			scheme = "https"
 		}
-		next, err := g.a.SealNextURL(fmt.Sprintf("%s://%s%s",
+		next, err := g.app.SealNextURL(fmt.Sprintf("%s://%s%s",
 			scheme, r.Host, r.URL.String()))
 		if err != nil {
 			return fmt.Errorf("unable to seal next url: %w", err)
 		}
-		signInURL := fmt.Sprintf("%s?next=%s", g.a.Config.SignInURL, url.QueryEscape(next))
+		signInURL := fmt.Sprintf("%s?next=%s", g.app.Config.SignInURL, url.QueryEscape(next))
 		http.Redirect(w, r, signInURL, http.StatusSeeOther)
 		return nil
 	}
