@@ -293,6 +293,9 @@ func NewApp(c Config) (*App, error) {
 	if c.CookieDomain == "" {
 		c.CookieDomain = wa.Config.RPID
 	}
+	if c.AuthBaseURL == "" {
+		c.AuthBaseURL = wa.Config.RPOrigins[0]
+	}
 	if c.SignInURL == "" {
 		c.SignInURL = wa.Config.RPOrigins[0]
 	}
