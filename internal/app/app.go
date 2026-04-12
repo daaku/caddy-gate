@@ -680,8 +680,9 @@ func (a *App) signOutPost(w http.ResponseWriter, r *http.Request) error {
 func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 	user, err := a.CurrentUser(r)
 	if err != nil {
+		sookie.Del(w, r, a.authCookie())
 		if !IsNotSignedInError(err) {
-			return err
+			log.Println(err)
 		}
 		return serr.Wrap(a.pageStd("Sign In",
 			h.Form(h.Action(pPkGet),
