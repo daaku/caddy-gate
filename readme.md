@@ -34,25 +34,32 @@ a fresh invite.
 
 ## Caddyfile
 
-Required configuration:
+Required parameters:
 
 - `data_dir`, a writable directory to store the data. Currently only contains
   a `keys.json` file containing the passkeys added over time. A directory is
   used to enable atomically replacing the file rather than updating it in place.
 - `secret`, a secret used to encrypt/sign cookies and parameters.
+- `rp`, various webauthn relying party parameters.
 - `users`, configure users.
 
 ```Caddyfile
 auth.example.com {
-  gate {
+	gate {
     data_dir /etc/caddy/gate/example.com
     secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
-    users {
-      zaphod "Zaphod" admin
-      trillian "Trillan" admin
-      marvin
-    }
-  }
+		default_next https://home.caddygate.com:4430
+		rp {
+			id caddygate.com
+			display_name "Caddygate Demo"
+			origin https://auth.caddygate.com:4430
+		}
+		users {
+			zaphod "Zaphod" admin
+			trillian "Trillan" admin audit
+			marvin
+		}
+	}
 }
 
 admin.example.com {
