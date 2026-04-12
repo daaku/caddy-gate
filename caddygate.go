@@ -233,7 +233,7 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 			return fmt.Errorf("named gate guard %q used without defining associated named serve", g.Name)
 		}
 	}
-	u, err := g.app.CurrentUser(r)
+	u, err := g.app.CurrentUser(w, r)
 	if app.IsNotSignedInError(err) {
 		scheme := r.URL.Scheme
 		if scheme == "" {

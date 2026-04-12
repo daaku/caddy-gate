@@ -420,9 +420,11 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 
 // CurrentUser returns the current logged in User.
 // Use IsNotSignedInError to check if the error indicates no signed in User.
-func (a *App) CurrentUser(r *http.Request) (User, error) {
+// Errors will trigger clearing the cookie.
+func (a *App) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) {
 	userID, err := sookie.Get[string](a.authCookieSecret, r, a.authCookieName)
 	if err != nil {
+		sookie.Del(w, r, a.authCookie()) // clear faulty cookies
 		return User{}, serr.Wrap(err)
 	}
 	return a.userByID(userID)
@@ -467,7 +469,7 @@ func (a *App) inviteURL(i *invite) string {
 const inputUserID = "userID"
 
 func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.validatePasskeyLogin(r)
+	user, err := a.validatePasskeyLogin(w, r)
 	if err != nil {
 		return httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -576,6 +578,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 	sessionData, err := sookie.Get[webauthn.SessionData](
 		a.registerCookieSecret, r, a.registerCookieName)
 	if err != nil {
+		sookie.Del(w, r, a.registerCookie()) // clear faulty cookies
 		return serr.Wrap(err)
 	}
 
@@ -610,10 +613,11 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 
 const pPkGet = "/pk-get"
 
-func (a *App) validatePasskeyLogin(r *http.Request) (User, error) {
+func (a *App) validatePasskeyLogin(w http.ResponseWriter, r *http.Request) (User, error) {
 	sessionData, err := sookie.Get[webauthn.SessionData](
 		a.signInCookieSecret, r, a.signInCookieName)
 	if err != nil {
+		sookie.Del(w, r, a.signInCookie()) // clear faulty cookies
 		return User{}, serr.Wrap(err)
 	}
 
@@ -644,7 +648,7 @@ func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
 const inputNext = "next"
 
 func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.validatePasskeyLogin(r)
+	user, err := a.validatePasskeyLogin(w, r)
 	if err != nil {
 		return err
 	}
@@ -678,9 +682,8 @@ func (a *App) signOutPost(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.CurrentUser(r)
+	user, err := a.CurrentUser(w, r)
 	if err != nil {
-		sookie.Del(w, r, a.authCookie())
 		if !IsNotSignedInError(err) {
 			log.Println(err)
 		}
