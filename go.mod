@@ -8,7 +8,7 @@ require (
 	github.com/daaku/serr v1.0.0
 	github.com/daaku/sookie v0.5.0
 	github.com/davecgh/go-spew v1.1.1
-	github.com/go-webauthn/webauthn v0.16.4
+	github.com/go-webauthn/webauthn v0.17.0
 	github.com/natefinch/atomic v1.0.1
 	github.com/wamuir/svg-qr-code v0.0.0-20260401105041-ffa27f6b527a
 	maragu.dev/gomponents v1.3.0
@@ -109,7 +109,7 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tailscale/go-winio v0.0.0-20231025203758-c4f33415bf55 // indirect
 	github.com/tailscale/tscert v0.0.0-20251216020129-aea342f6d747 // indirect
-	github.com/tinylib/msgp v1.6.3 // indirect
+	github.com/tinylib/msgp v1.6.4 // indirect
 	github.com/urfave/cli v1.22.17 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
