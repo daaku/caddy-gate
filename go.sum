@@ -107,6 +107,8 @@ github.com/cpuguy83/go-md2man v1.0.10/go.mod h1:SmD6nW6nTyfqj6ABTjUi3V3JVMnlJmwc
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/cpuguy83/go-md2man/v2 v2.0.7 h1:zbFlGlXEAKlwXpmvle3d8Oe3YnkKIK4xSRTd3sHPnBo=
 github.com/cpuguy83/go-md2man/v2 v2.0.7/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
+github.com/daaku/caddydecl v0.1.0 h1:Q4MYK3+/cUxEkfm+NK6tIDUYxCikypuaJ1Fzo2vIc24=
+github.com/daaku/caddydecl v0.1.0/go.mod h1:U+uUbe/WKwG25wkoHFvB6QHbdSJ3WGWXydHN6x0v/8o=
 github.com/daaku/ensure v1.0.1 h1:nnbJcD3PSxo6Jm7p8ODuw9WdMCHceF+z4fs+xCbj+PU=
 github.com/daaku/ensure v1.0.1/go.mod h1:DtAAnvKyntGyC/wijZKtC48R79j6YDoePh1/idKgDwc=
 github.com/daaku/serr v1.0.0 h1:LqUpkrQAACu6YHW9w3OMn3uQr2J+a1cdeyV/3HgptDs=

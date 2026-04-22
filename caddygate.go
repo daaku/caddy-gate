@@ -2,7 +2,6 @@
 package caddygate
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,13 +9,13 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/daaku/caddy-gate/internal/app"
+	"github.com/daaku/caddydecl"
 )
 
 const (
@@ -36,7 +35,10 @@ func init() {
 	caddy.RegisterModule(&Gate{})
 	caddy.RegisterModule(&GateServe{})
 	caddy.RegisterModule(&GateGuard{})
-	httpcaddyfile.RegisterHandlerDirective(sGate, parseCaddyfile)
+	httpcaddyfile.RegisterHandlerDirective(sGate,
+		func(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+			return parseCaddyfile(h.Dispenser)
+		})
 	httpcaddyfile.RegisterDirectiveOrder(sGate, httpcaddyfile.Before, "respond")
 }
 
@@ -64,8 +66,8 @@ func (g *Gate) Stop() error {
 }
 
 type GateServe struct {
-	Name   string     `json:"name,omitempty"`
-	Config app.Config `json:"config"`
+	Name       string `json:"name,omitempty" caddydecl:"serve"`
+	app.Config `json:"config"`
 
 	app *app.App
 }
@@ -75,35 +77,6 @@ func (*GateServe) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
 		ID:  "http.handlers.gate-serve",
 		New: func() caddy.Module { return new(GateServe) },
-	}
-}
-
-func (g *GateServe) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	d.Next()
-	// gate serve {block}
-	// gate serve named {block}
-	switch d.Token().Text {
-	default:
-		return d.Errf("unexpected gate serve token: %q", d.Token().Text)
-	case sServe:
-		if !d.NextArg() {
-			return d.Err("must specify name after gate serve")
-		}
-		g.Name = d.Token().Text
-
-		// look for immediate block to trigger serve for default config
-		var foundImmediateBlock bool
-		for nesting := d.Nesting(); d.NextBlock(nesting); {
-			foundImmediateBlock = true
-			if err := unmarshalAppConfigLine(&g.Config, d); err != nil {
-				return err
-			}
-		}
-		if foundImmediateBlock {
-			return nil
-		} else {
-			return d.Err("must specify block after gate serve <name>")
-		}
 	}
 }
 
@@ -147,8 +120,8 @@ func (g *GateServe) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhtt
 }
 
 type GateGuard struct {
-	Name           string   `json:"name,omitempty"`
-	Tags           []string `json:"tags,omitempty"`
+	Name           string   `json:"name,omitempty" caddydecl:"guard"`
+	Tags           []string `json:"tags,omitempty" caddydecl:"with"`
 	HeaderUserID   bool     `json:"headerUserID,omitempty"`
 	HeaderUserTags bool     `json:"headerUserTags,omitempty"`
 
@@ -163,39 +136,6 @@ func (*GateGuard) CaddyModule() caddy.ModuleInfo {
 		ID:  "http.handlers.gate-guard",
 		New: func() caddy.Module { return new(GateGuard) },
 	}
-}
-
-func (g *GateGuard) UnmarshalCaddyfile(h *caddyfile.Dispenser) error {
-	// gate with {tags}
-	// gate guard {named}
-	// gate guard {named} with {tags}
-	h.Next()
-	switch h.Token().Text {
-	default:
-		return h.Errf("unexpected gate guard token: %q", h.Token().Text)
-	case sWith:
-		g.Tags = h.RemainingArgs()
-		if len(g.Tags) == 0 {
-			return h.Err("must specify tags after with")
-		}
-	case sGuard:
-		if !h.NextArg() {
-			return h.Err("must specify name after gate guard")
-		}
-		g.Name = h.Token().Text
-
-		// if next arg, must be with + tags
-		if h.NextArg() {
-			if h.Token().Text != sWith {
-				return h.Errf("expected with and tags but got %q", h.Token().Text)
-			}
-			g.Tags = h.RemainingArgs()
-			if len(g.Tags) == 0 {
-				return h.Err("must specify tags after with")
-			}
-		}
-	}
-	return nil
 }
 
 // Provision provisions Gate Serve.
@@ -259,156 +199,50 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		io.WriteString(w, "You are logged in, but not allowed to access this.")
 		return nil
 	}
+
+	const kHeaderUserID = "X-Caddy-Gate-User-ID"
 	if g.HeaderUserID {
-		w.Header().Set("X-Caddy-Gate-User-ID", u.ID)
+		w.Header().Set(kHeaderUserID, u.ID)
 	} else {
-		w.Header().Del("X-Caddy-Gate-User-ID")
+		w.Header().Del(kHeaderUserID)
 	}
+
+	const kHeaderUserTags = "X-Caddy-Gate-User-Tags"
 	if g.HeaderUserTags && len(u.Tags) > 0 {
-		w.Header().Set("X-Caddy-Gate-User-Tags", strings.Join(u.Tags, ","))
+		w.Header().Set(kHeaderUserTags, strings.Join(u.Tags, ","))
 	} else {
-		w.Header().Del("X-Caddy-Gate-User-Tags")
+		w.Header().Del(kHeaderUserTags)
 	}
 	return next.ServeHTTP(w, r)
 }
 
-func nextArgString(dest *string, d *caddyfile.Dispenser) error {
-	if !d.NextArg() {
-		return d.ArgErr()
-	}
-	*dest = d.Token().Text
-	return nil
-}
-
-func nextArgB64URL(dest *[]byte, d *caddyfile.Dispenser) error {
-	if !d.NextArg() {
-		return d.ArgErr()
-	}
-	b, err := base64.RawURLEncoding.DecodeString(d.Token().Text)
-	if err != nil {
-		return d.Errf("invalid base64 URL encoded string: %s", d.Token().Text)
-	}
-	*dest = b
-	return nil
-}
-
-func nextArgDuration(dest *time.Duration, d *caddyfile.Dispenser) error {
-	if !d.NextArg() {
-		return d.ArgErr()
-	}
-	v, err := caddy.ParseDuration(d.Token().Text)
-	if err != nil {
-		return d.Errf("invalid duration string: %s", d.Token().Text)
-	}
-	*dest = v
-	return nil
-}
-
-func unmarsalRpLine(c *app.Config, d *caddyfile.Dispenser) error {
-	var err error
-	switch d.Token().Text {
-	default:
-		return d.Errf("unexpected option in rp block: %s", d.Token().Text)
-	case "display_name":
-		err = nextArgString(&c.RP.DisplayName, d)
-	case "id":
-		err = nextArgString(&c.RP.ID, d)
-	case "origin":
-		if !d.NextArg() {
-			return d.ArgErr()
-		}
-		c.RP.Origins = append(c.RP.Origins, d.Token().Text)
-	}
-	return err
-}
-
-func unmarshalAppConfigLine(c *app.Config, d *caddyfile.Dispenser) error {
-	var err error
-	switch d.Token().Text {
-	default:
-		return d.Errf("unexpected option in serve block: %s", d.Token().Text)
-	case "users":
-		for nesting := d.Nesting(); d.NextBlock(nesting); {
-			segment := d.NextSegment()
-			var u app.User
-			for i, token := range segment {
-				switch i {
-				case 0:
-					u.ID = token.Text
-				case 1:
-					u.Name = token.Text
-				default:
-					u.Tags = append(u.Tags, token.Text)
-				}
-			}
-			c.Users = append(c.Users, u)
-		}
-	case "rp":
-		for nesting := d.Nesting(); d.NextBlock(nesting); {
-			if err := unmarsalRpLine(c, d); err != nil {
-				return err
-			}
-		}
-	case "secret":
-		err = nextArgB64URL(&c.Secret, d)
-	case "auth_base_url":
-		err = nextArgString(&c.AuthBaseURL, d)
-	case "sign_in_url":
-		err = nextArgString(&c.SignInURL, d)
-	case "default_next":
-		err = nextArgString(&c.DefaultNext, d)
-	case "cookie_domain":
-		err = nextArgString(&c.CookieDomain, d)
-	case "cookie_name_prefix":
-		err = nextArgString(&c.CookieNamePrefix, d)
-	case "cookie_path":
-		err = nextArgString(&c.CookiePath, d)
-	case "data_dir":
-		err = nextArgString(&c.DataDir, d)
-	case "cookie_ttl":
-		err = nextArgDuration(&c.CookieTTL, d)
-	case "invite_ttl":
-		err = nextArgDuration(&c.InviteTTL, d)
-	}
-	return err
-}
-
-func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
-	segment := h.NextSegment()
-	segment = segment[2:] // consume empty start token and "gate"
-
-	d := caddyfile.NewDispenser(segment)
-	switch segment.Directive() {
-	default:
-		return nil, d.Errf("unable to identify serve or guard with: %q", d.Token().Text)
-	case "":
+func parseCaddyfile(d *caddyfile.Dispenser) (caddyhttp.MiddlewareHandler, error) {
+	d.Next() // consume "gate"
+	if !d.Next() {
 		// bare "gate", guard with default config
 		return &GateGuard{}, nil
-	case "{":
-		// bare "serve block", serve with default config
-		var c app.Config
-		for nesting := d.Nesting(); d.NextBlock(nesting); {
-			if err := unmarshalAppConfigLine(&c, d); err != nil {
-				return nil, err
-			}
-		}
-		return &GateServe{Config: c}, nil
+	}
+	switch d.Val() {
+	default:
+		return nil, d.Errf("unexpected argument: %q", d.Val())
 	case sGuard, sWith:
-		// gate / {tags}
+		// gate with {tags}
 		// gate guard {named}
-		// gate guard {named} / {tags}
+		// gate guard {named} with {tags}
+		d.Reset()
 		var g GateGuard
-		if err := g.UnmarshalCaddyfile(d); err != nil {
+		if err := caddydecl.Unmarshal(&g, d); err != nil {
 			return nil, err
 		}
 		return &g, nil
-	case sServe:
+	case "{", sServe:
+		d.Reset()
 		// gate {block}
 		// gate serve {named} {block}
-		var g GateServe
-		if err := g.UnmarshalCaddyfile(d); err != nil {
+		var s GateServe
+		if err := caddydecl.Unmarshal(&s, d); err != nil {
 			return nil, err
 		}
-		return &g, nil
+		return &s, nil
 	}
 }

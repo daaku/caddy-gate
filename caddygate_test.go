@@ -10,15 +10,10 @@ import (
 	"time"
 
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
-	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/daaku/caddy-gate/internal/app"
 	"github.com/daaku/ensure"
 )
-
-func h(v string) httpcaddyfile.Helper {
-	return httpcaddyfile.Helper{}.WithDispenser(caddyfile.NewTestDispenser(v))
-}
 
 func TestSuccessParseCaddyfile(t *testing.T) {
 	cookieSecret := make([]byte, 32)
@@ -67,8 +62,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 		},
 		{
 			"default gate guard with block",
-			`gate guard {
-				with admin crew
+			`gate with admin crew {
 				header_user_id true
 			}`,
 			&GateGuard{
@@ -160,7 +154,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			actual, err := parseCaddyfile(h(c.input))
+			actual, err := parseCaddyfile(caddyfile.NewTestDispenser(c.input))
 			ensure.Nil(t, err)
 			ensure.DeepEqual(t, actual, c.expected)
 		})
@@ -172,19 +166,19 @@ func TestErrorParseCaddyfile(t *testing.T) {
 		{
 			"gate foo",
 			`gate foo`,
-			"unable to identify serve or guard",
+			`unexpected argument: "foo"`,
 		},
 		{
 			"gate serve with missing name",
 			`gate serve`,
-			"must specify name",
+			"key serve has no value",
 		},
 		{
 			"gate invalid default serve option",
 			`gate {
 				foo bar
 			}`,
-			"unexpected option in serve block",
+			"unrecognized key: foo",
 		},
 		{
 			"gate invalid default serve rp option",
@@ -193,76 +187,48 @@ func TestErrorParseCaddyfile(t *testing.T) {
 					foo bar
 				}
 			}`,
-			"unexpected option in rp block",
-		},
-		{
-			"gate invalid default missing origin value",
-			`gate {
-				rp {
-					origin
-				}
-			}`,
-			"wrong argument count",
-		},
-		{
-			"gate invalid default serve missing ttl",
-			`gate {
-				cookie_ttl
-			}`,
-			"wrong argument count",
+			"unrecognized key: foo",
 		},
 		{
 			"gate invalid default serve ttl",
 			`gate {
 				cookie_ttl 1f
 			}`,
-			"invalid duration string",
+			"unknown unit",
 		},
 		{
 			"gate invalid default serve missing b64",
 			`gate {
 				secret
 			}`,
-			"wrong argument count",
+			"key secret has no value",
 		},
 		{
 			"gate invalid default serve b64",
 			`gate {
 				secret "$"
 			}`,
-			"invalid base64 URL encoded string",
-		},
-		{
-			"gate invalid default serve missing string",
-			`gate {
-				cookie_path
-			}`,
-			"wrong argument count",
+			"illegal base64 data",
 		},
 		{
 			"gate guard missing name",
 			`gate guard`,
-			"must specify name",
+			"key guard has no value",
 		},
 		{
 			"default gate with and no tags",
 			`gate with`,
-			"must specify tags",
+			"key with has no value",
 		},
 		{
 			"named gate with with and no tags",
 			`gate guard example.com with`,
-			"must specify tags",
-		},
-		{
-			"gate guard with missing name",
-			`gate guard`,
-			"must specify name",
+			"key with has no value",
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			actual, err := parseCaddyfile(h(c.input))
+			actual, err := parseCaddyfile(caddyfile.NewTestDispenser(c.input))
 			ensure.Nil(t, actual)
 			ensure.StringContains(t, err.Error(), c.err)
 		})

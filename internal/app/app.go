@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/daaku/serr"
 	"github.com/daaku/sookie"
 	"github.com/davecgh/go-spew/spew"
@@ -53,7 +54,7 @@ func maxAge(d time.Duration) int {
 type RelyingParty struct {
 	ID          string   `json:"id,omitempty"`
 	DisplayName string   `json:"displayName,omitempty"`
-	Origins     []string `json:"origins,omitempty"`
+	Origins     []string `json:"origins,omitempty" caddydecl:"origin"`
 }
 
 // Config defines the App config. This is typically instantiated by the
@@ -70,7 +71,7 @@ type Config struct {
 	SignInURL        string        `json:"signInURL,omitempty"`
 	DefaultNext      string        `json:"defaultNext,omitempty"`
 	RP               RelyingParty  `json:"rp"`
-	Users            []User        `json:"users,omitempty"`
+	Users            Users         `json:"users,omitempty"`
 }
 
 // User defined in the Caddyfile.
@@ -78,6 +79,27 @@ type User struct {
 	ID   string   `json:"id,omitempty"`
 	Name string   `json:"name,omitempty"`
 	Tags []string `json:"tags,omitempty"`
+}
+
+type Users []User
+
+func (a *Users) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	for nesting := d.Nesting(); d.NextBlock(nesting); {
+		segment := d.NextSegment()
+		var u User
+		for i, token := range segment {
+			switch i {
+			case 0:
+				u.ID = token.Text
+			case 1:
+				u.Name = token.Text
+			default:
+				u.Tags = append(u.Tags, token.Text)
+			}
+		}
+		*a = append(*a, u)
+	}
+	return nil
 }
 
 // UserCredential stored in the keys.json file in the data directory.
