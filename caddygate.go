@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -146,8 +147,10 @@ func (g *GateServe) ServeHTTP(w http.ResponseWriter, r *http.Request, _ caddyhtt
 }
 
 type GateGuard struct {
-	Name string   `json:"name,omitempty"`
-	Tags []string `json:"tags,omitempty"`
+	Name           string   `json:"name,omitempty"`
+	Tags           []string `json:"tags,omitempty"`
+	HeaderUserID   bool     `json:"headerUserID,omitempty"`
+	HeaderUserTags bool     `json:"headerUserTags,omitempty"`
 
 	gate *Gate
 	app  *app.App
@@ -255,6 +258,16 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		w.WriteHeader(http.StatusUnauthorized)
 		io.WriteString(w, "You are logged in, but not allowed to access this.")
 		return nil
+	}
+	if g.HeaderUserID {
+		w.Header().Set("X-Caddy-Gate-User-ID", u.ID)
+	} else {
+		w.Header().Del("X-Caddy-Gate-User-ID")
+	}
+	if g.HeaderUserTags && len(u.Tags) > 0 {
+		w.Header().Set("X-Caddy-Gate-User-Tags", strings.Join(u.Tags, ","))
+	} else {
+		w.Header().Del("X-Caddy-Gate-User-Tags")
 	}
 	return next.ServeHTTP(w, r)
 }

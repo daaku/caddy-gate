@@ -66,6 +66,17 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 			},
 		},
 		{
+			"default gate guard with block",
+			`gate guard {
+				with admin crew
+				header_user_id true
+			}`,
+			&GateGuard{
+				Tags:         []string{"admin", "crew"},
+				HeaderUserID: true,
+			},
+		},
+		{
 			"gate default serve block",
 			`gate {
 				auth_base_url https://foo.com
