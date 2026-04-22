@@ -202,16 +202,16 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 
 	const kHeaderUserID = "X-Caddy-Gate-User-ID"
 	if g.HeaderUserID {
-		w.Header().Set(kHeaderUserID, u.ID)
+		r.Header.Set(kHeaderUserID, u.ID)
 	} else {
-		w.Header().Del(kHeaderUserID)
+		r.Header.Del(kHeaderUserID)
 	}
 
 	const kHeaderUserTags = "X-Caddy-Gate-User-Tags"
 	if g.HeaderUserTags && len(u.Tags) > 0 {
-		w.Header().Set(kHeaderUserTags, strings.Join(u.Tags, ","))
+		r.Header.Set(kHeaderUserTags, strings.Join(u.Tags, ","))
 	} else {
-		w.Header().Del(kHeaderUserTags)
+		r.Header.Del(kHeaderUserTags)
 	}
 	return next.ServeHTTP(w, r)
 }
