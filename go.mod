@@ -9,7 +9,7 @@ require (
 	github.com/daaku/serr v1.0.0
 	github.com/daaku/sookie v0.5.0
 	github.com/davecgh/go-spew v1.1.1
-	github.com/go-webauthn/webauthn v0.17.0
+	github.com/go-webauthn/webauthn v0.17.2
 	github.com/natefinch/atomic v1.0.1
 	github.com/wamuir/svg-qr-code v0.0.0-20260401105041-ffa27f6b527a
 	maragu.dev/gomponents v1.3.0
