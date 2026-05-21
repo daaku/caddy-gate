@@ -6,7 +6,7 @@ require (
 	github.com/caddyserver/caddy/v2 v2.11.3
 	github.com/daaku/caddydecl v0.1.0
 	github.com/daaku/ensure v1.0.1
-	github.com/daaku/serr v1.0.0
+	github.com/daaku/serr v1.0.1
 	github.com/daaku/sookie v0.5.0
 	github.com/davecgh/go-spew v1.1.1
 	github.com/go-webauthn/webauthn v0.17.3
