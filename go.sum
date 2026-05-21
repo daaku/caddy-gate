@@ -113,8 +113,8 @@ github.com/daaku/caddydecl v0.1.0 h1:Q4MYK3+/cUxEkfm+NK6tIDUYxCikypuaJ1Fzo2vIc24
 github.com/daaku/caddydecl v0.1.0/go.mod h1:U+uUbe/WKwG25wkoHFvB6QHbdSJ3WGWXydHN6x0v/8o=
 github.com/daaku/ensure v1.0.1 h1:nnbJcD3PSxo6Jm7p8ODuw9WdMCHceF+z4fs+xCbj+PU=
 github.com/daaku/ensure v1.0.1/go.mod h1:DtAAnvKyntGyC/wijZKtC48R79j6YDoePh1/idKgDwc=
-github.com/daaku/serr v1.0.0 h1:LqUpkrQAACu6YHW9w3OMn3uQr2J+a1cdeyV/3HgptDs=
-github.com/daaku/serr v1.0.0/go.mod h1:VhjoETLRib15Tyd076UDQnVo9ozjnbMpoFlCTvwCEj0=
+github.com/daaku/serr v1.0.1 h1:LyNmeaienQ23z2o0FXCh7pcgbMDEJ3x0Rmx5pUaY/Oo=
+github.com/daaku/serr v1.0.1/go.mod h1:nNsWZD7EqMhBDMjeFpFJpy0gSia/QhaSbz55UaG4Y44=
 github.com/daaku/sookie v0.5.0 h1:F5TxgMBo1eeYuKgngHFhAd3wXuxUZw7z1rEak/CKnYE=
 github.com/daaku/sookie v0.5.0/go.mod h1:0GZkfF1cAHdCSxH7X3gUWStK/snAT653mQILXoHP61g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
