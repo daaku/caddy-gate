@@ -1,10 +1,13 @@
 package caddygate
 
 import (
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"regexp"
 	"testing"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/daaku/caddy-gate/internal/app"
 	"github.com/daaku/ensure"
+	"github.com/daaku/sookie"
 )
 
 func TestSuccessParseCaddyfile(t *testing.T) {
@@ -286,4 +290,70 @@ func TestGateIsNotSignedIn(t *testing.T) {
 	ensure.Nil(t, g.ServeHTTP(w, r, nil))
 	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
 	ensure.StringContains(t, w.Header().Get("Location"), "https://foo.com?next=")
+}
+
+func TestGateIsNotSignedInNextURL(t *testing.T) {
+	cases := []struct {
+		name     string
+		target   string
+		expected string
+	}{
+		{
+			name:     "origin form request",
+			target:   "/secret/page?q=1",
+			expected: "https://example.com/secret/page?q=1",
+		},
+		{
+			// Absolute-form request targets (RFC 9112 §3.2.2) populate the
+			// scheme and host on r.URL. They used to get the host prepended
+			// again, sealing a next URL with a duplicated hostname.
+			name:     "absolute form request",
+			target:   "https://protected.example.com/secret/page?q=1",
+			expected: "https://protected.example.com/secret/page?q=1",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			secret := make([]byte, 32)
+			rand.Read(secret)
+			a, err := app.NewApp(app.Config{
+				DataDir: t.TempDir(),
+				Secret:  secret,
+				RP: app.RelyingParty{
+					ID:          "example.com",
+					DisplayName: "Example",
+					Origins:     []string{"https://auth.example.com"},
+				},
+				Users: []app.User{
+					{ID: "neo"},
+				},
+			})
+			ensure.Nil(t, err)
+			g := GateGuard{
+				gate: &Gate{
+					app: map[string]*app.App{
+						"": a,
+					},
+				},
+			}
+			r := httptest.NewRequest("GET", c.target, nil)
+			w := httptest.NewRecorder()
+			ensure.Nil(t, g.ServeHTTP(w, r, nil))
+			ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
+			loc, err := url.Parse(w.Header().Get("Location"))
+			ensure.Nil(t, err)
+			next, err := sookie.Open[string](
+				guardNextSecret(t, secret), loc.Query().Get("next"))
+			ensure.Nil(t, err)
+			ensure.DeepEqual(t, next, c.expected)
+		})
+	}
+}
+
+// guardNextSecret mirrors the derivation of the app's next url secret.
+func guardNextSecret(t testing.TB, secret []byte) []byte {
+	t.Helper()
+	next, err := hkdf.Expand(sha256.New, secret, "next", 32)
+	ensure.Nil(t, err)
+	return next
 }

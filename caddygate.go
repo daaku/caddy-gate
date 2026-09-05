@@ -178,12 +178,19 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	}
 	u, err := g.app.CurrentUser(w, r)
 	if app.IsNotSignedInError(err) {
-		scheme := r.URL.Scheme
-		if scheme == "" {
-			scheme = "https"
+		// Build the full URL of the page being protected. For origin-form
+		// requests r.URL only carries the path, so fill in the scheme and
+		// host. For absolute-form requests (as sent by proxies) r.URL is
+		// already complete and must not be prefixed again or the host ends
+		// up duplicated.
+		nextURL := *r.URL
+		if nextURL.Scheme == "" {
+			nextURL.Scheme = "https"
 		}
-		next, err := g.app.SealNextURL(fmt.Sprintf("%s://%s%s",
-			scheme, r.Host, r.URL.String()))
+		if nextURL.Host == "" {
+			nextURL.Host = r.Host
+		}
+		next, err := g.app.SealNextURL(nextURL.String())
 		if err != nil {
 			return fmt.Errorf("unable to seal next url: %w", err)
 		}
