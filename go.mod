@@ -9,7 +9,7 @@ require (
 	github.com/daaku/serr v1.0.1
 	github.com/daaku/sookie v0.5.0
 	github.com/davecgh/go-spew v1.1.1
-	github.com/go-webauthn/webauthn v0.18.1
+	github.com/go-webauthn/webauthn v0.18.2
 	github.com/natefinch/atomic v1.0.1
 	github.com/wamuir/svg-qr-code v0.0.0-20260401105041-ffa27f6b527a
 	maragu.dev/gomponents v1.3.0
@@ -47,7 +47,7 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20240924180020-3414d57e47da // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
