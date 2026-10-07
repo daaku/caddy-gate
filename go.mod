@@ -12,7 +12,7 @@ require (
 	github.com/go-webauthn/webauthn v0.18.2
 	github.com/natefinch/atomic v1.0.1
 	github.com/wamuir/svg-qr-code v0.0.0-20260401105041-ffa27f6b527a
-	maragu.dev/gomponents v1.3.0
+	maragu.dev/gomponents v1.4.0
 )
 
 require (
