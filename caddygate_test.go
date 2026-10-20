@@ -399,3 +399,27 @@ func TestGateStripsGateCookies(t *testing.T) {
 	ensure.NotNil(t, upstream)
 	ensure.DeepEqual(t, upstream.Header.Values("Cookie"), []string{"foo=1; bar=2"})
 }
+
+func TestGateInvalidCookieRedirectsToSignIn(t *testing.T) {
+	a := newValidApp(t)
+	g := GateGuard{
+		gate: &Gate{
+			app: map[string]*app.App{
+				"": a,
+			},
+		},
+	}
+	// sealed with a different secret, as happens after rotating it
+	otherSecret := make([]byte, 32)
+	rand.Read(otherSecret)
+	stale, err := sookie.Seal(otherSecret, time.Now().Add(time.Hour), "zaphod")
+	ensure.Nil(t, err)
+	for _, value := range []string{stale, "garbage"} {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: "gate-a", Value: value})
+		w := httptest.NewRecorder()
+		ensure.Nil(t, g.ServeHTTP(w, r, nil))
+		ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
+		ensure.StringContains(t, w.Header().Get("Set-Cookie"), "gate-a=;")
+	}
+}

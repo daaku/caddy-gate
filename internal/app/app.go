@@ -126,11 +126,16 @@ func (u waUser) WebAuthnCredentials() []webauthn.Credential { return u.credentia
 func IsNotSignedInError(err error) bool {
 	return errors.Is(err, http.ErrNoCookie) ||
 		errors.Is(err, sookie.ErrExpired) ||
-		errors.Is(err, ErrUserNotFound)
+		errors.Is(err, ErrUserNotFound) ||
+		errors.Is(err, ErrInvalidCookie)
 }
 
 // ErrUserNotFound indicates user was not found.
 var ErrUserNotFound = errors.New("user not found")
+
+// ErrInvalidCookie indicates the auth cookie was present but could not be
+// opened, for example because the secret was rotated.
+var ErrInvalidCookie = errors.New("invalid auth cookie")
 
 type keyStore struct {
 	path string
@@ -461,9 +466,17 @@ func (a *App) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) 
 	userID, err := sookie.Get[string](a.authCookieSecret, r, a.authCookieName)
 	if err != nil {
 		sookie.Del(w, r, a.authCookie()) // clear faulty cookies
-		return User{}, serr.Wrap(err)
+		if errors.Is(err, http.ErrNoCookie) || errors.Is(err, sookie.ErrExpired) {
+			return User{}, serr.Wrap(err)
+		}
+		return User{}, serr.Errorf("%w: %w", ErrInvalidCookie, err)
 	}
-	return a.userByID(userID)
+	user, err := a.userByID(userID)
+	if err != nil {
+		sookie.Del(w, r, a.authCookie()) // user was removed from the config
+		return User{}, err
+	}
+	return user, nil
 }
 
 // StripCookies removes the gate cookies from the request. The guard uses this
