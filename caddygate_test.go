@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -472,4 +473,43 @@ func TestGateSignedInWithCredential(t *testing.T) {
 		})))
 	ensure.NotNil(t, upstream)
 	ensure.DeepEqual(t, upstream.Header.Get("X-Caddy-Gate-User-ID"), "neo")
+}
+
+func TestGateStripsSpoofedIdentityHeaders(t *testing.T) {
+	a, auth := newAppWithCredential(t)
+	for _, enabled := range []bool{false, true} {
+		g := GateGuard{
+			HeaderUserID:   enabled,
+			HeaderUserTags: enabled,
+			gate: &Gate{
+				app: map[string]*app.App{
+					"": a,
+				},
+			},
+		}
+		r := httptest.NewRequest("GET", "/", nil)
+		r.AddCookie(&http.Cookie{Name: "gate-a", Value: auth})
+		r.Header["X-Caddy-Gate-User-Id"] = []string{"zaphod"}
+		r.Header["X-Caddy-Gate-User_ID"] = []string{"zaphod"}
+		r.Header["x_caddy_gate_user_tags"] = []string{"admin"}
+		var upstream *http.Request
+		ensure.Nil(t, g.ServeHTTP(httptest.NewRecorder(), r, caddyhttp.HandlerFunc(
+			func(w http.ResponseWriter, r *http.Request) error {
+				upstream = r
+				return nil
+			})))
+		ensure.NotNil(t, upstream)
+		var expected http.Header
+		if enabled {
+			expected = http.Header{"X-Caddy-Gate-User-Id": {"neo"}}
+		}
+		for k, v := range upstream.Header {
+			if strings.Contains(strings.ToLower(k), "gate") {
+				ensure.DeepEqual(t, v, expected[k])
+			}
+		}
+		if enabled {
+			ensure.DeepEqual(t, upstream.Header.Get("X-Caddy-Gate-User-ID"), "neo")
+		}
+	}
 }

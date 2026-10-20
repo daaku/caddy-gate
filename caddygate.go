@@ -210,19 +210,28 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 	g.app.StripCookies(r)
 
 	const kHeaderUserID = "X-Caddy-Gate-User-ID"
+	delHeaderVariants(r.Header, kHeaderUserID)
 	if g.HeaderUserID {
 		r.Header.Set(kHeaderUserID, u.ID)
-	} else {
-		r.Header.Del(kHeaderUserID)
 	}
 
 	const kHeaderUserTags = "X-Caddy-Gate-User-Tags"
+	delHeaderVariants(r.Header, kHeaderUserTags)
 	if g.HeaderUserTags && len(u.Tags) > 0 {
 		r.Header.Set(kHeaderUserTags, strings.Join(u.Tags, ","))
-	} else {
-		r.Header.Del(kHeaderUserTags)
 	}
 	return next.ServeHTTP(w, r)
+}
+
+// delHeaderVariants removes every header a backend could read as name. That
+// includes spellings with underscores in place of dashes, since CGI and FastCGI
+// (including Caddy's own php_fastcgi) map both to the same variable.
+func delHeaderVariants(h http.Header, name string) {
+	for k := range h {
+		if strings.EqualFold(strings.ReplaceAll(k, "_", "-"), name) {
+			delete(h, k)
+		}
+	}
 }
 
 func parseCaddyfile(d *caddyfile.Dispenser) (caddyhttp.MiddlewareHandler, error) {
