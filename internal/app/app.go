@@ -620,7 +620,15 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Errorf("only admins can create invites")
 	}
 
-	i := &invite{UserID: r.FormValue(inputUserID)}
+	invitee, err := a.userByID(r.FormValue(inputUserID))
+	if err != nil {
+		return httpError(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			a.pageError("Unknown User", g.Text("No such user to invite.")).Render(w)
+		})
+	}
+
+	i := &invite{UserID: invitee.ID}
 	if err := a.invites.Create(i); err != nil {
 		return err
 	}
