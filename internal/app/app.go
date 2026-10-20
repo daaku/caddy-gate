@@ -302,6 +302,12 @@ func NewApp(c Config) (*App, error) {
 		RPID:          c.RP.ID,
 		RPDisplayName: c.RP.DisplayName,
 		RPOrigins:     c.RP.Origins,
+		// Passkeys are the only factor, so require the authenticator to verify
+		// the user (PIN, biometric) and not just their presence (a tap). This
+		// applies to both registration and sign-in ceremonies.
+		AuthenticatorSelection: protocol.AuthenticatorSelection{
+			UserVerification: protocol.VerificationRequired,
+		},
 	})
 	if err != nil {
 		return nil, serr.Wrap(err)
