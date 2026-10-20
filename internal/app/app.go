@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -453,6 +454,35 @@ func (a *App) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) 
 		return User{}, serr.Wrap(err)
 	}
 	return a.userByID(userID)
+}
+
+// StripCookies removes the gate cookies from the request. The guard uses this
+// before passing the request upstream, so the protected backends never see the
+// auth cookie, which would otherwise let them impersonate the user on every
+// other guarded site.
+func (a *App) StripCookies(r *http.Request) {
+	lines := r.Header.Values("Cookie")
+	if len(lines) == 0 {
+		return
+	}
+	var kept []string
+	for _, line := range lines {
+		for part := range strings.SplitSeq(line, ";") {
+			part = strings.TrimSpace(part)
+			name, _, _ := strings.Cut(part, "=")
+			switch strings.TrimSpace(name) {
+			case a.authCookieName, a.signInCookieName, a.registerCookieName:
+				continue
+			}
+			if part != "" {
+				kept = append(kept, part)
+			}
+		}
+	}
+	r.Header.Del("Cookie")
+	if len(kept) > 0 {
+		r.Header.Set("Cookie", strings.Join(kept, "; "))
+	}
 }
 
 // SealNextURL seals the URL for use as the next parameter in the sign-in flow.

@@ -207,6 +207,8 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return nil
 	}
 
+	g.app.StripCookies(r)
+
 	const kHeaderUserID = "X-Caddy-Gate-User-ID"
 	if g.HeaderUserID {
 		r.Header.Set(kHeaderUserID, u.ID)

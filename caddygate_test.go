@@ -357,3 +357,45 @@ func guardNextSecret(t testing.TB, secret []byte) []byte {
 	ensure.Nil(t, err)
 	return next
 }
+
+func TestGateStripsGateCookies(t *testing.T) {
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	a, err := app.NewApp(app.Config{
+		DataDir: t.TempDir(),
+		Secret:  secret,
+		RP: app.RelyingParty{
+			ID:          "example.com",
+			DisplayName: "Example",
+			Origins:     []string{"https://auth.example.com"},
+		},
+		Users: []app.User{
+			{ID: "neo"},
+		},
+	})
+	ensure.Nil(t, err)
+	g := GateGuard{
+		gate: &Gate{
+			app: map[string]*app.App{
+				"": a,
+			},
+		},
+	}
+	authSecret, err := hkdf.Expand(sha256.New, secret, "authCookie", 32)
+	ensure.Nil(t, err)
+	auth, err := sookie.Seal(authSecret, time.Now().Add(time.Hour), "neo")
+	ensure.Nil(t, err)
+
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Add("Cookie", "foo=1; gate-a="+auth+"; gate-l=x")
+	r.Header.Add("Cookie", "gate-r=y; bar=2")
+	w := httptest.NewRecorder()
+	var upstream *http.Request
+	ensure.Nil(t, g.ServeHTTP(w, r, caddyhttp.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) error {
+			upstream = r
+			return nil
+		})))
+	ensure.NotNil(t, upstream)
+	ensure.DeepEqual(t, upstream.Header.Values("Cookie"), []string{"foo=1; bar=2"})
+}
