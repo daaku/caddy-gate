@@ -119,3 +119,26 @@ func TestCurrentUserRequiresKnownCredential(t *testing.T) {
 		})
 	}
 }
+
+func TestBootstrapInviteIsForFirstAdmin(t *testing.T) {
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	a, err := NewApp(Config{
+		DataDir: t.TempDir(),
+		Secret:  secret,
+		RP: RelyingParty{
+			ID:          "example.com",
+			DisplayName: "Example",
+			Origins:     []string{"https://auth.example.com"},
+		},
+		Users: Users{
+			{ID: "marvin"},
+			{ID: "zaphod", Tags: []string{tagAdmin}},
+		},
+	})
+	ensure.Nil(t, err)
+	ensure.DeepEqual(t, len(a.invites.invites), 1)
+	for _, i := range a.invites.invites {
+		ensure.DeepEqual(t, i.UserID, "zaphod")
+	}
+}

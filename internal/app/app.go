@@ -387,7 +387,7 @@ func NewApp(c Config) (*App, error) {
 	if len(a.keys.All()) == 0 {
 		for _, u := range a.Config.Users {
 			if slices.Contains(u.Tags, tagAdmin) {
-				i := &invite{UserID: a.Config.Users[0].ID}
+				i := &invite{UserID: u.ID}
 				if err := a.invites.Create(i); err != nil {
 					return nil, err
 				}
