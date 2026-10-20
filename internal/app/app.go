@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -497,8 +498,27 @@ func (a *App) SealNextURL(u string) (string, error) {
 }
 
 // OpenNextURL opens the sealed URL from the next parameter in the sign-in flow.
+// Only https URLs on the cookie domain are accepted, since those are the only
+// places the auth cookie works.
 func (a *App) OpenNextURL(u string) (string, error) {
-	return sookie.Open[string](a.nextSecret, u)
+	raw, err := sookie.Open[string](a.nextSecret, u)
+	if err != nil {
+		return "", err
+	}
+	if !a.isAllowedNext(raw) {
+		return "", serr.Errorf("next url not allowed: %q", raw)
+	}
+	return raw, nil
+}
+
+func (a *App) isAllowedNext(raw string) bool {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	domain := strings.ToLower(strings.TrimPrefix(a.Config.CookieDomain, "."))
+	return host == domain || strings.HasSuffix(host, "."+domain)
 }
 
 const pInvite = "/invite"
