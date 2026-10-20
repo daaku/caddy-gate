@@ -395,6 +395,7 @@ func (a *App) registerCookie() http.Cookie {
 		MaxAge:   maxAge(time.Minute * 10),
 		Secure:   true,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
 	}
 }
 
@@ -406,6 +407,7 @@ func (a *App) signInCookie() http.Cookie {
 		MaxAge:   maxAge(time.Minute * 10),
 		Secure:   true,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
 	}
 }
 
@@ -417,6 +419,7 @@ func (a *App) authCookie() http.Cookie {
 		MaxAge:   maxAge(a.Config.CookieTTL),
 		Secure:   true,
 		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
 	}
 }
 

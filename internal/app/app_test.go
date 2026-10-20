@@ -42,6 +42,16 @@ func TestSignInRequiresUserVerification(t *testing.T) {
 	ensure.DeepEqual(t, assertion.Response.UserVerification, protocol.VerificationRequired)
 }
 
+func TestCookiesAreSameSiteLax(t *testing.T) {
+	a := newTestApp(t)
+	for _, c := range []http.Cookie{a.authCookie(), a.signInCookie(), a.registerCookie()} {
+		ensure.DeepEqual(t, c.SameSite, http.SameSiteLaxMode)
+	}
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, httptest.NewRequest(http.MethodGet, pPkGet, nil))
+	ensure.StringContains(t, w.Header().Get("Set-Cookie"), "SameSite=Lax")
+}
+
 func TestIsAllowedNext(t *testing.T) {
 	a := newTestApp(t)
 	cases := []struct {
