@@ -47,7 +47,11 @@ Required parameters:
 - `data_dir`, a writable directory to store the data. Currently only contains
   a `keys.json` file containing the passkeys added over time. A directory is
   used to enable atomically replacing the file rather than updating it in place.
-- `secret`, a secret used to encrypt/sign cookies and parameters.
+- `secret`, a secret used to encrypt/sign cookies and parameters. Anyone who
+  knows it can sign in as any user, so [generate your own](#generate-secret)
+  and keep it out of version control, for example by passing it in through
+  an environment variable as the examples below do. Never reuse the one in
+  the demo `Caddyfile`.
 - `rp`, various webauthn relying party parameters.
 - `users`, configure users.
 
@@ -55,7 +59,7 @@ Required parameters:
 auth.example.com {
 	gate {
     data_dir /etc/caddy/gate/example.com
-    secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+    secret {$CADDY_GATE_SECRET}
 		default_next https://home.caddygate.com:4430
 		rp {
 			id caddygate.com
@@ -85,7 +89,7 @@ logs.example.com {
 auth.example.com {
   gate serve example.com {
     data_dir /etc/caddy/gate/example.com
-    secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+    secret {$CADDY_GATE_SECRET}
     cookie_domain example.com
     cookie_ttl 30d
     auth_base_url https://auth.example.com

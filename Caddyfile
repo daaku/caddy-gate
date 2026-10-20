@@ -1,3 +1,4 @@
+# Local demo only. Never reuse this secret, see the readme.
 {
 	admin off
 	auto_https disable_redirects
