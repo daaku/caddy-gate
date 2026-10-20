@@ -6,7 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/daaku/ensure"
 	"github.com/go-webauthn/webauthn/protocol"
@@ -141,4 +144,28 @@ func TestBootstrapInviteIsForFirstAdmin(t *testing.T) {
 	for _, i := range a.invites.invites {
 		ensure.DeepEqual(t, i.UserID, "zaphod")
 	}
+}
+
+func TestInviteTakeIsSingleUse(t *testing.T) {
+	var s inviteStore
+	s.ttl = time.Hour
+	i := &invite{UserID: "marvin"}
+	ensure.Nil(t, s.Create(i))
+
+	var wg sync.WaitGroup
+	var taken atomic.Int32
+	for range 16 {
+		wg.Go(func() {
+			if _, err := s.Take(i.ID); err == nil {
+				taken.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	ensure.DeepEqual(t, taken.Load(), int32(1))
+
+	expired := &invite{UserID: "marvin", ExpiresAt: time.Now().Add(-time.Minute)}
+	ensure.Nil(t, s.Create(expired))
+	_, err := s.Take(expired.ID)
+	ensure.True(t, errors.Is(err, errInviteNotFound))
 }

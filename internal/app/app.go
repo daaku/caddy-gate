@@ -269,11 +269,17 @@ func (s *inviteStore) Create(i *invite) error {
 	return nil
 }
 
-func (s *inviteStore) Delete(inviteID string) error {
+// Take removes and returns the invite, failing if it doesn't exist or has
+// expired. Only one caller can successfully take a given invite.
+func (s *inviteStore) Take(inviteID string) (*invite, error) {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	i, found := s.invites[inviteID]
+	if !found || i.expired() {
+		return nil, serr.Errorf("%w %q", errInviteNotFound, inviteID)
+	}
 	delete(s.invites, inviteID)
-	return nil
+	return i, nil
 }
 
 // App provides the HTTP UI for caddygate.
@@ -576,10 +582,7 @@ func (a *App) inviteUser(r *http.Request) (*invite, waUser, error) {
 	inviteID := r.PathValue("invite")
 	invite, err := a.invites.Get(inviteID)
 	if errors.Is(err, errInviteNotFound) || invite != nil && invite.expired() {
-		return nil, waUser{}, httpError(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
-			a.pageError("Not Found", g.Text("No valid invite found.")).Render(w)
-		})
+		return nil, waUser{}, a.inviteNotFound()
 	}
 	if err != nil {
 		return nil, waUser{}, err
@@ -589,6 +592,13 @@ func (a *App) inviteUser(r *http.Request) (*invite, waUser, error) {
 		return nil, waUser{}, err
 	}
 	return invite, a.keys.WaUser(user), nil
+}
+
+func (a *App) inviteNotFound() error {
+	return httpError(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		a.pageError("Not Found", g.Text("No valid invite found.")).Render(w)
+	})
 }
 
 func (a *App) inviteURL(i *invite) string {
@@ -724,11 +734,13 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Wrap(err)
 	}
 
-	if err := a.keys.RegisterCredential(user.user, credential); err != nil {
-		return err
+	// Consume the invite before storing the credential, so concurrent requests
+	// using the same invite can't each register a key.
+	if _, err := a.invites.Take(invite.ID); err != nil {
+		return a.inviteNotFound()
 	}
 
-	if err := a.invites.Delete(invite.ID); err != nil {
+	if err := a.keys.RegisterCredential(user.user, credential); err != nil {
 		return err
 	}
 
