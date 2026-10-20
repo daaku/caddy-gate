@@ -1,13 +1,20 @@
 package app
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -226,4 +233,161 @@ func TestRegistrationExcludesExistingCredentials(t *testing.T) {
 	ensure.Nil(t, json.NewDecoder(w.Body).Decode(&creation))
 	ensure.DeepEqual(t, len(creation.Response.CredentialExcludeList), 1)
 	ensure.DeepEqual(t, []byte(creation.Response.CredentialExcludeList[0].CredentialID), credential.ID)
+}
+
+// testAuthenticator is a minimal software passkey, enough to drive real
+// sign-in ceremonies against the app.
+type testAuthenticator struct {
+	key          *ecdsa.PrivateKey
+	credentialID []byte
+	user         User
+}
+
+const (
+	flagUserPresent  = 0x01
+	flagUserVerified = 0x04
+)
+
+func newTestAuthenticator(t testing.TB, a *App, user User) *testAuthenticator {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	ensure.Nil(t, err)
+	ta := &testAuthenticator{
+		key:          key,
+		credentialID: []byte("credential-" + user.ID),
+		user:         user,
+	}
+	ensure.Nil(t, a.keys.RegisterCredential(user, &webauthn.Credential{
+		ID:        ta.credentialID,
+		PublicKey: ta.coseKey(),
+	}))
+	return ta
+}
+
+// coseKey encodes the public key as a COSE_Key: an EC2 (kty 2) ES256 (alg -7)
+// key on P-256 (crv 1).
+func (ta *testAuthenticator) coseKey() []byte {
+	uncompressed, _ := ta.key.PublicKey.ECDH()
+	xy := uncompressed.Bytes()[1:]
+	k := []byte{0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20}
+	k = append(k, xy[:32]...)
+	k = append(k, 0x22, 0x58, 0x20)
+	return append(k, xy[32:]...)
+}
+
+// assert returns the JSON for a navigator.credentials.get() response.
+func (ta *testAuthenticator) assert(t testing.TB, a *App, challenge string, flags byte) string {
+	t.Helper()
+	clientData, err := json.Marshal(map[string]any{
+		"type":        "webauthn.get",
+		"challenge":   challenge,
+		"origin":      a.Config.RP.Origins[0],
+		"crossOrigin": false,
+	})
+	ensure.Nil(t, err)
+	rpIDHash := sha256.Sum256([]byte(a.Config.RP.ID))
+	authData := append(rpIDHash[:], flags, 0, 0, 0, 0)
+	clientDataHash := sha256.Sum256(clientData)
+	digest := sha256.Sum256(append(slices.Clone(authData), clientDataHash[:]...))
+	signature, err := ecdsa.SignASN1(rand.Reader, ta.key, digest[:])
+	ensure.Nil(t, err)
+	b64 := base64.RawURLEncoding.EncodeToString
+	response, err := json.Marshal(map[string]any{
+		"id":    b64(ta.credentialID),
+		"rawId": b64(ta.credentialID),
+		"type":  "public-key",
+		"response": map[string]any{
+			"clientDataJSON":    b64(clientData),
+			"authenticatorData": b64(authData),
+			"signature":         b64(signature),
+			"userHandle":        b64([]byte(ta.user.ID)),
+		},
+	})
+	ensure.Nil(t, err)
+	return string(response)
+}
+
+// beginSignIn starts a sign-in ceremony, returning the challenge and the
+// session cookies.
+func beginSignIn(t testing.TB, a *App) (string, []*http.Cookie) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, httptest.NewRequest(http.MethodGet, pPkGet, nil))
+	ensure.DeepEqual(t, w.Code, http.StatusOK)
+	var assertion protocol.CredentialAssertion
+	ensure.Nil(t, json.NewDecoder(w.Body).Decode(&assertion))
+	return assertion.Response.Challenge.String(), w.Result().Cookies()
+}
+
+func postSignIn(a *App, cookies []*http.Cookie, response string) *httptest.ResponseRecorder {
+	form := url.Values{inputJSON: {response}}
+	r := httptest.NewRequest(http.MethodPost, pPkGet, strings.NewReader(form.Encode()))
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		r.AddCookie(c)
+	}
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, r)
+	return w
+}
+
+func authCookieFrom(a *App, w *httptest.ResponseRecorder) *http.Cookie {
+	for _, c := range w.Result().Cookies() {
+		if c.Name == a.authCookieName && c.Value != "" {
+			return c
+		}
+	}
+	return nil
+}
+
+func TestSignIn(t *testing.T) {
+	a := newTestApp(t)
+	ta := newTestAuthenticator(t, a, a.Config.Users[1])
+	challenge, cookies := beginSignIn(t, a)
+	w := postSignIn(a, cookies, ta.assert(t, a, challenge, flagUserPresent|flagUserVerified))
+	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
+	auth := authCookieFrom(a, w)
+	ensure.NotNil(t, auth)
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.AddCookie(auth)
+	user, err := a.CurrentUser(httptest.NewRecorder(), r)
+	ensure.Nil(t, err)
+	ensure.DeepEqual(t, user.ID, ta.user.ID)
+}
+
+func TestSignInWithoutUserVerificationFails(t *testing.T) {
+	a := newTestApp(t)
+	ta := newTestAuthenticator(t, a, a.Config.Users[1])
+	challenge, cookies := beginSignIn(t, a)
+	w := postSignIn(a, cookies, ta.assert(t, a, challenge, flagUserPresent))
+	ensure.DeepEqual(t, w.Code, http.StatusInternalServerError)
+	ensure.True(t, authCookieFrom(a, w) == nil)
+}
+
+func TestSignInReplayFails(t *testing.T) {
+	a := newTestApp(t)
+	ta := newTestAuthenticator(t, a, a.Config.Users[1])
+	challenge, cookies := beginSignIn(t, a)
+	response := ta.assert(t, a, challenge, flagUserPresent|flagUserVerified)
+
+	w := postSignIn(a, cookies, response)
+	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
+	// the session cookie is cleared after use
+	ensure.StringContains(t, strings.Join(w.Header().Values("Set-Cookie"), "\n"),
+		a.signInCookieName+"=;")
+
+	// replaying the same cookie and response is rejected
+	w = postSignIn(a, cookies, response)
+	ensure.DeepEqual(t, w.Code, http.StatusInternalServerError)
+	ensure.True(t, authCookieFrom(a, w) == nil)
+}
+
+func TestChallengeStoreForgetsExpired(t *testing.T) {
+	var s challengeStore
+	ensure.Nil(t, s.Spend("a"))
+	ensure.True(t, errors.Is(s.Spend("a"), errChallengeSpent))
+	s.spent["a"] = time.Now().Add(-time.Second)
+	ensure.Nil(t, s.Spend("b"))
+	ensure.DeepEqual(t, len(s.spent), 1)
 }

@@ -243,6 +243,40 @@ func genRandomID() string {
 	return base64.RawURLEncoding.EncodeToString(id[:])
 }
 
+// ceremonyTTL is how long a WebAuthn registration or sign-in ceremony may take.
+const ceremonyTTL = time.Minute * 10
+
+// challengeStore remembers the WebAuthn challenges that have completed a
+// ceremony. The session data lives in a cookie, so without this a captured
+// cookie and response pair could be replayed until the cookie expires.
+type challengeStore struct {
+	lock  sync.Mutex
+	spent map[string]time.Time // challenge => when it can be forgotten
+}
+
+var errChallengeSpent = errors.New("challenge already used")
+
+// Spend marks the challenge used, failing if it already was.
+func (s *challengeStore) Spend(challenge string) error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	now := time.Now()
+	for c, forgetAt := range s.spent {
+		if forgetAt.Before(now) {
+			delete(s.spent, c)
+		}
+	}
+	if _, found := s.spent[challenge]; found {
+		return serr.Wrap(errChallengeSpent)
+	}
+	if s.spent == nil {
+		s.spent = map[string]time.Time{}
+	}
+	// the session cookie, and so the challenge, is valid for at most this long
+	s.spent[challenge] = now.Add(ceremonyTTL)
+	return nil
+}
+
 type inviteStore struct {
 	ttl     time.Duration
 	invites map[string]*invite
@@ -305,6 +339,7 @@ type App struct {
 	wa                 *webauthn.WebAuthn
 	keys               keyStore
 	invites            inviteStore
+	challenges         challengeStore
 	registerCookieName string
 	signInCookieName   string
 	authCookieName     string
@@ -427,7 +462,7 @@ func (a *App) registerCookie() http.Cookie {
 		Name:     a.registerCookieName,
 		Path:     a.Config.CookiePath,
 		Domain:   a.Config.CookieDomain,
-		MaxAge:   maxAge(time.Minute * 10),
+		MaxAge:   maxAge(ceremonyTTL),
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -439,7 +474,7 @@ func (a *App) signInCookie() http.Cookie {
 		Name:     a.signInCookieName,
 		Path:     a.Config.CookiePath,
 		Domain:   a.Config.CookieDomain,
-		MaxAge:   maxAge(time.Minute * 10),
+		MaxAge:   maxAge(ceremonyTTL),
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -753,6 +788,10 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return serr.Wrap(err)
 	}
+	if err := a.challenges.Spend(sessionData.Challenge); err != nil {
+		return err
+	}
+	sookie.Del(w, r, a.registerCookie())
 
 	// Consume the invite before storing the credential, so concurrent requests
 	// using the same invite can't each register a key.
@@ -792,6 +831,10 @@ func (a *App) validatePasskeyLogin(w http.ResponseWriter, r *http.Request) (User
 	if err != nil {
 		return User{}, nil, serr.Wrap(err)
 	}
+	if err := a.challenges.Spend(sessionData.Challenge); err != nil {
+		return User{}, nil, err
+	}
+	sookie.Del(w, r, a.signInCookie())
 	return user.(waUser).user, credential, nil
 }
 
