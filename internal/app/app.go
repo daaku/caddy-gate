@@ -151,13 +151,22 @@ func (s *keyStore) All() []UserCredential {
 	return *s.keys.Load()
 }
 
+var errCredentialExists = errors.New("credential already registered")
+
 func (s *keyStore) RegisterCredential(user User, credential *webauthn.Credential) error {
 	// Serialize writers so the file is always written with the latest keys,
 	// and only publish the new keys once they have been persisted.
 	s.lock.Lock()
 	defer s.lock.Unlock()
 
-	newKeys := append(slices.Clone(*s.keys.Load()), UserCredential{
+	keys := *s.keys.Load()
+	for _, uc := range keys {
+		if bytes.Equal(uc.Credential.ID, credential.ID) {
+			return serr.Errorf("%w", errCredentialExists)
+		}
+	}
+
+	newKeys := append(slices.Clone(keys), UserCredential{
 		UserID:     user.ID,
 		Credential: *credential,
 	})
@@ -707,6 +716,7 @@ func (a *App) pkCreateGet(w http.ResponseWriter, r *http.Request) error {
 
 	options, sessionData, err := a.wa.BeginRegistration(user,
 		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
+		webauthn.WithExclusions(webauthn.Credentials(user.credentials).CredentialDescriptors()),
 	)
 	if err != nil {
 		return serr.Wrap(err)

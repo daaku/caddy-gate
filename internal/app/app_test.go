@@ -200,3 +200,30 @@ func TestRegisterCredentialWriteFailure(t *testing.T) {
 	ensure.NotNil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
 	ensure.DeepEqual(t, len(a.keys.All()), 0)
 }
+
+func TestRegisterCredentialRejectsDuplicateID(t *testing.T) {
+	a := newTestApp(t)
+	credential := webauthn.Credential{ID: []byte("credential")}
+	ensure.Nil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
+	for _, u := range a.Config.Users {
+		err := a.keys.RegisterCredential(u, &credential)
+		ensure.True(t, errors.Is(err, errCredentialExists))
+	}
+	ensure.DeepEqual(t, len(a.keys.All()), 1)
+}
+
+func TestRegistrationExcludesExistingCredentials(t *testing.T) {
+	a := newTestApp(t)
+	credential := webauthn.Credential{ID: []byte("credential")}
+	ensure.Nil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
+	i := &invite{UserID: a.Config.Users[1].ID}
+	ensure.Nil(t, a.invites.Create(i))
+
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, httptest.NewRequest(http.MethodGet, pPkCreate+"/"+i.ID, nil))
+	ensure.DeepEqual(t, w.Code, http.StatusOK)
+	var creation protocol.CredentialCreation
+	ensure.Nil(t, json.NewDecoder(w.Body).Decode(&creation))
+	ensure.DeepEqual(t, len(creation.Response.CredentialExcludeList), 1)
+	ensure.DeepEqual(t, []byte(creation.Response.CredentialExcludeList[0].CredentialID), credential.ID)
+}
