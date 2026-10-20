@@ -3,12 +3,14 @@ package app
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/daaku/ensure"
 	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func newTestApp(t testing.TB) *App {
@@ -78,6 +80,42 @@ func TestIsAllowedNext(t *testing.T) {
 			ensure.Nil(t, err)
 			_, err = a.OpenNextURL(sealed)
 			ensure.DeepEqual(t, err == nil, c.allowed)
+		})
+	}
+}
+
+func TestCurrentUserRequiresKnownCredential(t *testing.T) {
+	a := newTestApp(t)
+	known := webauthn.Credential{ID: []byte("known")}
+	ensure.Nil(t, a.keys.RegisterCredential(a.Config.Users[1], &known))
+
+	cases := []struct {
+		name    string
+		session authSession
+		err     error
+	}{
+		{"known credential", authSession{UserID: "marvin", CredentialID: known.ID}, nil},
+		{"removed credential", authSession{UserID: "marvin", CredentialID: []byte("removed")}, ErrCredentialNotFound},
+		{"other user's credential", authSession{UserID: "zaphod", CredentialID: known.ID}, ErrCredentialNotFound},
+		{"removed user", authSession{UserID: "trillian", CredentialID: known.ID}, ErrUserNotFound},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ensure.Nil(t, a.setAuthCookie(w, User{ID: c.session.UserID},
+				&webauthn.Credential{ID: c.session.CredentialID}))
+			r := httptest.NewRequest(http.MethodGet, "/", nil)
+			for _, cookie := range w.Result().Cookies() {
+				r.AddCookie(cookie)
+			}
+			user, err := a.CurrentUser(httptest.NewRecorder(), r)
+			if c.err == nil {
+				ensure.Nil(t, err)
+				ensure.DeepEqual(t, user.ID, c.session.UserID)
+			} else {
+				ensure.True(t, errors.Is(err, c.err))
+				ensure.True(t, IsNotSignedInError(err))
+			}
 		})
 	}
 }

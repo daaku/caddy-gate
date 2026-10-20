@@ -127,11 +127,15 @@ func IsNotSignedInError(err error) bool {
 	return errors.Is(err, http.ErrNoCookie) ||
 		errors.Is(err, sookie.ErrExpired) ||
 		errors.Is(err, ErrUserNotFound) ||
-		errors.Is(err, ErrInvalidCookie)
+		errors.Is(err, ErrInvalidCookie) ||
+		errors.Is(err, ErrCredentialNotFound)
 }
 
 // ErrUserNotFound indicates user was not found.
 var ErrUserNotFound = errors.New("user not found")
+
+// ErrCredentialNotFound indicates the passkey used to sign in was removed.
+var ErrCredentialNotFound = errors.New("credential not found")
 
 // ErrInvalidCookie indicates the auth cookie was present but could not be
 // opened, for example because the secret was rotated.
@@ -174,6 +178,15 @@ func (s *keyStore) RegisterCredential(user User, credential *webauthn.Credential
 		}
 		return nil
 	}
+}
+
+func (s *keyStore) HasCredential(userID string, credentialID []byte) bool {
+	for _, uc := range s.All() {
+		if uc.UserID == userID && bytes.Equal(uc.Credential.ID, credentialID) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *keyStore) WaUser(u User) waUser {
@@ -459,11 +472,26 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 	}
 }
 
+// authSession is the value stored in the auth cookie. It records the
+// credential used to sign in, so removing a passkey from keys.json also ends
+// the sessions it created.
+type authSession struct {
+	UserID       string
+	CredentialID []byte
+}
+
+func (a *App) setAuthCookie(w http.ResponseWriter, user User, credential *webauthn.Credential) error {
+	return sookie.Set(a.authCookieSecret, w, authSession{
+		UserID:       user.ID,
+		CredentialID: credential.ID,
+	}, a.authCookie())
+}
+
 // CurrentUser returns the current logged in User.
 // Use IsNotSignedInError to check if the error indicates no signed in User.
 // Errors will trigger clearing the cookie.
 func (a *App) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) {
-	userID, err := sookie.Get[string](a.authCookieSecret, r, a.authCookieName)
+	session, err := sookie.Get[authSession](a.authCookieSecret, r, a.authCookieName)
 	if err != nil {
 		sookie.Del(w, r, a.authCookie()) // clear faulty cookies
 		if errors.Is(err, http.ErrNoCookie) || errors.Is(err, sookie.ErrExpired) {
@@ -471,10 +499,14 @@ func (a *App) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) 
 		}
 		return User{}, serr.Errorf("%w: %w", ErrInvalidCookie, err)
 	}
-	user, err := a.userByID(userID)
+	user, err := a.userByID(session.UserID)
 	if err != nil {
 		sookie.Del(w, r, a.authCookie()) // user was removed from the config
 		return User{}, err
+	}
+	if !a.keys.HasCredential(user.ID, session.CredentialID) {
+		sookie.Del(w, r, a.authCookie()) // passkey was removed from keys.json
+		return User{}, serr.Errorf("%w for user %q", ErrCredentialNotFound, user.ID)
 	}
 	return user, nil
 }
@@ -566,7 +598,7 @@ func (a *App) inviteURL(i *invite) string {
 const inputUserID = "userID"
 
 func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.validatePasskeyLogin(w, r)
+	user, _, err := a.validatePasskeyLogin(w, r)
 	if err != nil {
 		return httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -700,7 +732,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := sookie.Set(a.authCookieSecret, w, user.user.ID, a.authCookie()); err != nil {
+	if err := a.setAuthCookie(w, user.user, credential); err != nil {
 		return serr.Wrap(err)
 	}
 
@@ -710,25 +742,25 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 
 const pPkGet = "/pk-get"
 
-func (a *App) validatePasskeyLogin(w http.ResponseWriter, r *http.Request) (User, error) {
+func (a *App) validatePasskeyLogin(w http.ResponseWriter, r *http.Request) (User, *webauthn.Credential, error) {
 	sessionData, err := sookie.Get[webauthn.SessionData](
 		a.signInCookieSecret, r, a.signInCookieName)
 	if err != nil {
 		sookie.Del(w, r, a.signInCookie()) // clear faulty cookies
-		return User{}, serr.Wrap(err)
+		return User{}, nil, serr.Wrap(err)
 	}
 
 	parsedResponse, err := protocol.ParseCredentialRequestResponseBytes(
 		[]byte(r.FormValue(inputJSON)))
 	if err != nil {
-		return User{}, serr.Wrap(err)
+		return User{}, nil, serr.Wrap(err)
 	}
 
-	user, _, err := a.wa.ValidatePasskeyLogin(a.discoverUser, sessionData, parsedResponse)
+	user, credential, err := a.wa.ValidatePasskeyLogin(a.discoverUser, sessionData, parsedResponse)
 	if err != nil {
-		return User{}, serr.Wrap(err)
+		return User{}, nil, serr.Wrap(err)
 	}
-	return user.(waUser).user, nil
+	return user.(waUser).user, credential, nil
 }
 
 func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
@@ -745,12 +777,12 @@ func (a *App) signInGet(w http.ResponseWriter, r *http.Request) error {
 const inputNext = "next"
 
 func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.validatePasskeyLogin(w, r)
+	user, credential, err := a.validatePasskeyLogin(w, r)
 	if err != nil {
 		return err
 	}
 
-	if err := sookie.Set(a.authCookieSecret, w, user.ID, a.authCookie()); err != nil {
+	if err := a.setAuthCookie(w, user, credential); err != nil {
 		return serr.Wrap(err)
 	}
 

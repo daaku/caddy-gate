@@ -24,6 +24,14 @@ Once you've configured the user and reloaded the config in Caddy, an admin
 can create an invite for that user. The same process can be used repeatedly
 for allowing a user to add additional keys.
 
+## Revoking
+
+Sessions are tied to the passkey used to sign in. To revoke a lost passkey,
+remove its entry from `keys.json` and reload Caddy (use `caddy reload --force`
+if the Caddyfile itself didn't change). Any sessions created with that passkey
+end on their next request. Removing a user from the `Caddyfile` ends all of
+their sessions. Rotating the `secret` ends every session.
+
 ## Bootstrapping
 
 The first admin passkey needs to be bootstrapped. At startup, if no users with
