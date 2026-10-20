@@ -4,8 +4,10 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -168,4 +170,33 @@ func TestInviteTakeIsSingleUse(t *testing.T) {
 	ensure.Nil(t, s.Create(expired))
 	_, err := s.Take(expired.ID)
 	ensure.True(t, errors.Is(err, errInviteNotFound))
+}
+
+func TestRegisterCredentialConcurrent(t *testing.T) {
+	a := newTestApp(t)
+	const n = 32
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Go(func() {
+			credential := webauthn.Credential{ID: fmt.Appendf(nil, "credential-%d", i)}
+			ensure.Nil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
+		})
+	}
+	wg.Wait()
+	ensure.DeepEqual(t, len(a.keys.All()), n)
+
+	// what's on disk must match what's in memory
+	var reloaded keyStore
+	reloaded.path = a.keys.path
+	ensure.Nil(t, reloaded.Reload())
+	ensure.DeepEqual(t, len(reloaded.All()), n)
+}
+
+func TestRegisterCredentialWriteFailure(t *testing.T) {
+	a := newTestApp(t)
+	// a directory where the file should be makes the write fail
+	ensure.Nil(t, os.Mkdir(a.keys.path, 0o700))
+	credential := webauthn.Credential{ID: []byte("credential")}
+	ensure.NotNil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
+	ensure.DeepEqual(t, len(a.keys.All()), 0)
 }

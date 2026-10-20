@@ -152,32 +152,32 @@ func (s *keyStore) All() []UserCredential {
 }
 
 func (s *keyStore) RegisterCredential(user User, credential *webauthn.Credential) error {
-	for {
-		keys := s.keys.Load()
-		newKeys := append(slices.Clone(*keys), UserCredential{
-			UserID:     user.ID,
-			Credential: *credential,
-		})
-		if !s.keys.CompareAndSwap(keys, &newKeys) {
-			continue // try again
-		}
+	// Serialize writers so the file is always written with the latest keys,
+	// and only publish the new keys once they have been persisted.
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-		jsonB, err := json.MarshalIndent(newKeys, "", "  ")
-		if err != nil {
-			return serr.Wrap(err)
-		}
+	newKeys := append(slices.Clone(*s.keys.Load()), UserCredential{
+		UserID:     user.ID,
+		Credential: *credential,
+	})
 
-		dir := filepath.Dir(s.path)
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			if err := os.MkdirAll(dir, 0o700); err != nil {
-				return serr.Wrap(err)
-			}
-		}
-		if err := atomicfile.WriteFile(s.path, bytes.NewReader(jsonB)); err != nil {
-			return serr.Wrap(err)
-		}
-		return nil
+	jsonB, err := json.MarshalIndent(newKeys, "", "  ")
+	if err != nil {
+		return serr.Wrap(err)
 	}
+
+	dir := filepath.Dir(s.path)
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return serr.Wrap(err)
+		}
+	}
+	if err := atomicfile.WriteFile(s.path, bytes.NewReader(jsonB)); err != nil {
+		return serr.Wrap(err)
+	}
+	s.keys.Store(&newKeys)
+	return nil
 }
 
 func (s *keyStore) HasCredential(userID string, credentialID []byte) bool {
@@ -212,6 +212,8 @@ func (s *keyStore) Reload() error {
 	if err := json.Unmarshal(jsonB, &keys); err != nil {
 		return serr.Wrap(err)
 	}
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	s.keys.Store(&keys)
 	return nil
 }
