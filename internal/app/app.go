@@ -750,7 +750,7 @@ func (a *App) pkCreateGet(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	options, sessionData, err := a.wa.BeginRegistration(user,
-		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
 		webauthn.WithExclusions(webauthn.Credentials(user.credentials).CredentialDescriptors()),
 	)
 	if err != nil {

@@ -391,3 +391,18 @@ func TestChallengeStoreForgetsExpired(t *testing.T) {
 	ensure.Nil(t, s.Spend("b"))
 	ensure.DeepEqual(t, len(s.spent), 1)
 }
+
+func TestRegistrationRequiresDiscoverableCredential(t *testing.T) {
+	a := newTestApp(t)
+	i := &invite{UserID: a.Config.Users[1].ID}
+	ensure.Nil(t, a.invites.Create(i))
+
+	w := httptest.NewRecorder()
+	a.ServeHTTP(w, httptest.NewRequest(http.MethodGet, pPkCreate+"/"+i.ID, nil))
+	ensure.DeepEqual(t, w.Code, http.StatusOK)
+	var creation protocol.CredentialCreation
+	ensure.Nil(t, json.NewDecoder(w.Body).Decode(&creation))
+	selection := creation.Response.AuthenticatorSelection
+	ensure.DeepEqual(t, selection.ResidentKey, protocol.ResidentKeyRequirementRequired)
+	ensure.True(t, *selection.RequireResidentKey)
+}
