@@ -26,11 +26,13 @@ for allowing a user to add additional keys.
 
 ## Revoking
 
-Sessions are tied to the passkey used to sign in. To revoke a lost passkey,
-remove its entry from `keys.json` and reload Caddy (use `caddy reload --force`
-if the Caddyfile itself didn't change). Any sessions created with that passkey
-end on their next request. Removing a user from the `Caddyfile` ends all of
-their sessions. Rotating the `secret` ends every session.
+To revoke a lost passkey, remove its entry from `keys.json` on the machine
+serving sign-in, and reload Caddy there (use `caddy reload --force` if the
+Caddyfile itself didn't change). That stops the passkey from signing in again,
+but sessions it already created stay valid until they expire (`cookie_ttl`),
+because guards don't consult `keys.json`. To end sessions as well, remove the
+user from the `Caddyfile`, which ends all of their sessions, or rotate the
+`secret`, which ends every session.
 
 ## Bootstrapping
 

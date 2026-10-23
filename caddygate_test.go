@@ -5,12 +5,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -21,7 +18,6 @@ import (
 	"github.com/daaku/caddy-gate/internal/app"
 	"github.com/daaku/ensure"
 	"github.com/daaku/sookie"
-	"github.com/go-webauthn/webauthn/webauthn"
 )
 
 func TestSuccessParseCaddyfile(t *testing.T) {
@@ -363,28 +359,15 @@ func guardNextSecret(t testing.TB, secret []byte) []byte {
 	return next
 }
 
-// authSession mirrors the app's auth cookie value.
-type authSession struct {
-	UserID       string
-	CredentialID []byte
-}
-
-// newAppWithCredential returns an app with a single user "neo" who has a
-// registered credential, along with a valid auth cookie value for them.
-func newAppWithCredential(t testing.TB) (*app.App, string) {
+// newSignedInApp returns an app with a single user "neo", along with a valid
+// auth cookie value for them. The app has no keys in its data dir, like a
+// guard running on a different machine from the one users sign in on.
+func newSignedInApp(t testing.TB) (*app.App, string) {
 	t.Helper()
 	secret := make([]byte, 32)
 	rand.Read(secret)
-	dataDir := t.TempDir()
-	credentialID := []byte("neo-credential")
-	keysJSON, err := json.Marshal([]app.UserCredential{{
-		UserID:     "neo",
-		Credential: webauthn.Credential{ID: credentialID},
-	}})
-	ensure.Nil(t, err)
-	ensure.Nil(t, os.WriteFile(filepath.Join(dataDir, "keys.json"), keysJSON, 0o600))
 	a, err := app.NewApp(app.Config{
-		DataDir: dataDir,
+		DataDir: t.TempDir(),
 		Secret:  secret,
 		RP: app.RelyingParty{
 			ID:          "example.com",
@@ -398,14 +381,13 @@ func newAppWithCredential(t testing.TB) (*app.App, string) {
 	ensure.Nil(t, err)
 	authSecret, err := hkdf.Expand(sha256.New, secret, "authCookie", 32)
 	ensure.Nil(t, err)
-	auth, err := sookie.Seal(authSecret, time.Now().Add(time.Hour),
-		authSession{UserID: "neo", CredentialID: credentialID})
+	auth, err := sookie.Seal(authSecret, time.Now().Add(time.Hour), "neo")
 	ensure.Nil(t, err)
 	return a, auth
 }
 
 func TestGateStripsGateCookies(t *testing.T) {
-	a, auth := newAppWithCredential(t)
+	a, auth := newSignedInApp(t)
 	g := GateGuard{
 		gate: &Gate{
 			app: map[string]*app.App{
@@ -452,8 +434,10 @@ func TestGateInvalidCookieRedirectsToSignIn(t *testing.T) {
 	}
 }
 
-func TestGateSignedInWithCredential(t *testing.T) {
-	a, auth := newAppWithCredential(t)
+// The guard must accept a session without having the user's passkeys in its
+// own keys.json, since it may run on a different machine than sign-in.
+func TestGateSignedInWithoutLocalKeys(t *testing.T) {
+	a, auth := newSignedInApp(t)
 	g := GateGuard{
 		HeaderUserID: true,
 		gate: &Gate{
@@ -476,7 +460,7 @@ func TestGateSignedInWithCredential(t *testing.T) {
 }
 
 func TestGateStripsSpoofedIdentityHeaders(t *testing.T) {
-	a, auth := newAppWithCredential(t)
+	a, auth := newSignedInApp(t)
 	for _, enabled := range []bool{false, true} {
 		g := GateGuard{
 			HeaderUserID:   enabled,

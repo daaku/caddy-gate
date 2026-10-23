@@ -29,6 +29,11 @@ func newTestApp(t testing.TB) *App {
 	t.Helper()
 	secret := make([]byte, 32)
 	rand.Read(secret)
+	return newTestAppWithSecret(t, secret)
+}
+
+func newTestAppWithSecret(t testing.TB, secret []byte) *App {
+	t.Helper()
 	a, err := NewApp(Config{
 		DataDir: t.TempDir(),
 		Secret:  secret,
@@ -92,42 +97,6 @@ func TestIsAllowedNext(t *testing.T) {
 			ensure.Nil(t, err)
 			_, err = a.OpenNextURL(sealed)
 			ensure.DeepEqual(t, err == nil, c.allowed)
-		})
-	}
-}
-
-func TestCurrentUserRequiresKnownCredential(t *testing.T) {
-	a := newTestApp(t)
-	known := webauthn.Credential{ID: []byte("known")}
-	ensure.Nil(t, a.keys.RegisterCredential(a.Config.Users[1], &known))
-
-	cases := []struct {
-		name    string
-		session authSession
-		err     error
-	}{
-		{"known credential", authSession{UserID: "marvin", CredentialID: known.ID}, nil},
-		{"removed credential", authSession{UserID: "marvin", CredentialID: []byte("removed")}, ErrCredentialNotFound},
-		{"other user's credential", authSession{UserID: "zaphod", CredentialID: known.ID}, ErrCredentialNotFound},
-		{"removed user", authSession{UserID: "trillian", CredentialID: known.ID}, ErrUserNotFound},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			ensure.Nil(t, a.setAuthCookie(w, User{ID: c.session.UserID},
-				&webauthn.Credential{ID: c.session.CredentialID}))
-			r := httptest.NewRequest(http.MethodGet, "/", nil)
-			for _, cookie := range w.Result().Cookies() {
-				r.AddCookie(cookie)
-			}
-			user, err := a.CurrentUser(httptest.NewRecorder(), r)
-			if c.err == nil {
-				ensure.Nil(t, err)
-				ensure.DeepEqual(t, user.ID, c.session.UserID)
-			} else {
-				ensure.True(t, errors.Is(err, c.err))
-				ensure.True(t, IsNotSignedInError(err))
-			}
 		})
 	}
 }
@@ -405,4 +374,27 @@ func TestRegistrationRequiresDiscoverableCredential(t *testing.T) {
 	selection := creation.Response.AuthenticatorSelection
 	ensure.DeepEqual(t, selection.ResidentKey, protocol.ResidentKeyRequirementRequired)
 	ensure.True(t, *selection.RequireResidentKey)
+}
+
+// A session created on the machine users sign in on must work on another
+// machine (a guard) that shares the config and secret but has no keys.json.
+func TestSignInSessionWorksWithoutLocalKeys(t *testing.T) {
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	auth := newTestAppWithSecret(t, secret)
+	guard := newTestAppWithSecret(t, secret)
+	ensure.DeepEqual(t, len(guard.keys.All()), 0)
+
+	ta := newTestAuthenticator(t, auth, auth.Config.Users[1])
+	challenge, cookies := beginSignIn(t, auth)
+	w := postSignIn(auth, cookies, ta.assert(t, auth, challenge, flagUserPresent|flagUserVerified))
+	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
+	cookie := authCookieFrom(auth, w)
+	ensure.NotNil(t, cookie)
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.AddCookie(cookie)
+	user, err := guard.CurrentUser(httptest.NewRecorder(), r)
+	ensure.Nil(t, err)
+	ensure.DeepEqual(t, user.ID, ta.user.ID)
 }
