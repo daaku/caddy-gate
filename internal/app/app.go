@@ -366,6 +366,11 @@ func NewApp(c Config) (*App, error) {
 		AuthenticatorSelection: protocol.AuthenticatorSelection{
 			UserVerification: protocol.VerificationRequired,
 		},
+		// Some authenticators (password managers, platform passkey providers)
+		// return extension outputs like "prf" without being asked. We request
+		// no extensions and never read their outputs, so ignore them rather
+		// than failing the ceremony.
+		ExtensionsUnsolicitedOutputPolicy: protocol.UnsolicitedOutputPolicyIgnore,
 	})
 	if err != nil {
 		return nil, serr.Wrap(err)
