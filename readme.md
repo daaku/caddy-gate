@@ -44,76 +44,142 @@ a fresh invite.
 
 ## Caddyfile
 
-Required parameters:
+The config is split in two:
 
-- `data_dir`, a writable directory to store the data. Currently only contains
-  a `keys.json` file containing the passkeys added over time. A directory is
-  used to enable atomically replacing the file rather than updating it in place.
-- `secret`, a secret used to encrypt/sign cookies and parameters. Anyone who
-  knows it can sign in as any user, so [generate your own](#generate-secret)
-  and keep it out of version control, for example by passing it in through
-  an environment variable as the examples below do. Never reuse the one in
-  the demo `Caddyfile`.
-- `rp`, various webauthn relying party parameters.
-- `users`, configure users.
+- The `gate` global option holds the config shared by every machine that
+  guards a site, which is all that is needed to check a session.
+- The `gate serve` directive goes in the site serving sign-in, and adds the
+  config only needed there.
+
+This lets guards run on machines that don't serve sign-in, without them
+declaring the sign-in site, or acquiring a certificate for it. Share the
+global option between machines, for example with `import`, and only declare the
+sign-in site on the one machine that serves it.
+
+Global option parameters:
+
+- `secret` (required), a secret used to encrypt/sign cookies and parameters.
+  Anyone who knows it can sign in as any user, so
+  [generate your own](#generate-secret) and keep it out of version control, for
+  example by passing it in through an environment variable as the examples
+  below do. Never reuse the one in the demo `Caddyfile`.
+- `cookie_domain` (required), the domain the auth cookie is set on, which
+  covers all its subdomains.
+- `sign_in_url` (required), where guards send users to sign in.
+- `users` (required), configure users.
+
+Serve parameters:
+
+- `data_dir` (required), a writable directory to store the data. Currently only
+  contains a `keys.json` file containing the passkeys added over time. A
+  directory is used to enable atomically replacing the file rather than
+  updating it in place.
+- `rp`, various webauthn relying party parameters. The `id` defaults to the
+  `cookie_domain`, and the `origin` to that of the `sign_in_url`.
 
 ```Caddyfile
-auth.example.com {
+{
 	gate {
-    data_dir /etc/caddy/gate/example.com
-    secret {$CADDY_GATE_SECRET}
-		default_next https://home.caddygate.com:4430
-		rp {
-			id caddygate.com
-			display_name "Caddygate Demo"
-			origin https://auth.caddygate.com:4430
-		}
+		secret {$CADDY_GATE_SECRET}
+		cookie_domain example.com
+		sign_in_url https://auth.example.com
 		users {
 			zaphod "Zaphod" admin
-			trillian "Trillan" admin audit
+			trillian "Trillian" admin audit
 			marvin
 		}
 	}
 }
 
+# only on the machine serving sign-in
+auth.example.com {
+	gate serve {
+		data_dir /etc/caddy/gate/example.com
+		default_next https://home.example.com
+		rp {
+			display_name "Example"
+		}
+	}
+}
+
+# on any machine with the global option
 admin.example.com {
-  gate with admin
+	gate with admin
 }
 
 logs.example.com {
-  gate
+	gate
 }
 ```
 
 ### All Configuration Options
 
+Multiple configs can be defined by naming them, and referring to them by name
+in `gate serve` and `gate guard`.
+
 ```Caddyfile
+{
+	gate example.com {
+		secret {$CADDY_GATE_SECRET}
+		cookie_domain example.com
+		cookie_path /
+		cookie_name_prefix gate-
+		cookie_ttl 30d
+		sign_in_url https://auth.example.com
+		users {
+			zaphod "Zaphod" admin
+			trillian "Trillian" admin
+			marvin
+		}
+	}
+}
+
 auth.example.com {
-  gate serve example.com {
-    data_dir /etc/caddy/gate/example.com
-    secret {$CADDY_GATE_SECRET}
-    cookie_domain example.com
-    cookie_ttl 30d
-    auth_base_url https://auth.example.com
-    rp {
-      id example.com
-      display_name "Example"
-      origin https://example.com
-    }
-    users {
-      zaphod "Zaphod" admin
-      trillian "Trillian" admin
-      marvin
-    }
-  }
+	gate serve example.com {
+		data_dir /etc/caddy/gate/example.com
+		auth_base_url https://auth.example.com
+		default_next https://example.com
+		invite_ttl 1h
+		rp {
+			id example.com
+			display_name "Example"
+			origin https://auth.example.com
+		}
+	}
 }
 
 admin.example.com {
-  gate guard example.com with admin
+	gate guard example.com with admin {
+		header_user_id true
+		header_user_tags true
+	}
 }
 
 logs.example.com {
-  gate guard example.com
+	gate guard example.com
+}
+```
+
+### Single Site Config
+
+On a single machine, the global option can instead be given inline in the serve
+directive, in which case the `cookie_domain` defaults to the `rp` `id` and the
+`sign_in_url` to the first `rp` `origin`:
+
+```Caddyfile
+auth.example.com {
+	gate {
+		data_dir /etc/caddy/gate/example.com
+		secret {$CADDY_GATE_SECRET}
+		rp {
+			id example.com
+			display_name "Example"
+			origin https://auth.example.com
+		}
+		users {
+			zaphod "Zaphod" admin
+		}
+	}
 }
 ```
 

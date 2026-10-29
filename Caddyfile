@@ -3,23 +3,26 @@
 	admin off
 	auto_https disable_redirects
 	https_port 4430
-}
 
-auth.caddygate.com {
-	tls internal
 	gate {
-		data_dir {$HOME}/.local/share/caddy/gate/caddygate.com
 		secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
-		default_next https://home.caddygate.com:4430
-		rp {
-			id caddygate.com
-			display_name "Caddygate Demo"
-			origin https://auth.caddygate.com:4430
-		}
+		cookie_domain caddygate.com
+		sign_in_url https://auth.caddygate.com:4430
 		users {
 			zaphod "Zaphod" admin
 			trillian "Trillan" admin audit
 			marvin
+		}
+	}
+}
+
+auth.caddygate.com {
+	tls internal
+	gate serve {
+		data_dir {$HOME}/.local/share/caddy/gate/caddygate.com
+		default_next https://home.caddygate.com:4430
+		rp {
+			display_name "Caddygate Demo"
 		}
 	}
 }

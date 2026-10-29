@@ -59,21 +59,27 @@ type RelyingParty struct {
 	Origins     []string `json:"origins,omitempty" caddydecl:"origin"`
 }
 
-// Config defines the App config. This is typically instantiated by the
-// GateServe caddyfile directive.
+// Config is shared by guards and the sign-in server. It holds everything
+// needed to check a session, and nothing that is only needed to create one.
+// This is typically instantiated by the gate global option.
 type Config struct {
-	DataDir          string        `json:"dataDir,omitempty"`
 	CookieDomain     string        `json:"cookieDomain,omitempty"`
 	CookiePath       string        `json:"cookiePath,omitempty"`
 	CookieNamePrefix string        `json:"cookieNamePrefix,omitempty"`
 	CookieTTL        time.Duration `json:"cookieTTL,omitempty"`
 	Secret           []byte        `json:"secret,omitempty"`
-	InviteTTL        time.Duration `json:"inviteTTL,omitempty"`
-	AuthBaseURL      string        `json:"authBaseURL,omitempty"`
 	SignInURL        string        `json:"signInURL,omitempty"`
-	DefaultNext      string        `json:"defaultNext,omitempty"`
-	RP               RelyingParty  `json:"rp"`
 	Users            Users         `json:"users,omitempty"`
+}
+
+// ServeConfig is only needed where sign-in is served. This is typically
+// instantiated by the GateServe caddyfile directive.
+type ServeConfig struct {
+	DataDir     string        `json:"dataDir,omitempty"`
+	InviteTTL   time.Duration `json:"inviteTTL,omitempty"`
+	AuthBaseURL string        `json:"authBaseURL,omitempty"`
+	DefaultNext string        `json:"defaultNext,omitempty"`
+	RP          RelyingParty  `json:"rp"`
 }
 
 // User defined in the Caddyfile.
@@ -314,23 +320,75 @@ func (s *inviteStore) Take(inviteID string) (*invite, error) {
 	return i, nil
 }
 
-// App provides the HTTP UI for caddygate.
-type App struct {
-	Config Config
+// Verifier checks the sessions created by the sign-in server. It only needs
+// the shared Config, so guards can run on machines that don't serve sign-in.
+type Verifier struct {
+	config Config
 
-	registerCookieSecret []byte
-	authCookieSecret     []byte
-	signInCookieSecret   []byte
-	nextSecret           []byte
-
-	wa                 *webauthn.WebAuthn
-	keys               keyStore
-	invites            inviteStore
-	challenges         challengeStore
+	authCookieSecret   []byte
+	nextSecret         []byte
 	registerCookieName string
 	signInCookieName   string
 	authCookieName     string
-	handler            http.HandlerFunc
+}
+
+// NewVerifier validates the config, sets defaults and returns a functional
+// Verifier.
+func NewVerifier(c Config) (*Verifier, error) {
+	if c.CookieDomain == "" {
+		return nil, serr.Errorf("must specify cookie_domain in config")
+	}
+	if c.SignInURL == "" {
+		return nil, serr.Errorf("must specify sign_in_url in config")
+	}
+	if c.CookiePath == "" {
+		c.CookiePath = "/"
+	}
+	if c.CookieTTL == 0 {
+		c.CookieTTL = time.Hour * 24 * 30
+	}
+	if c.CookieNamePrefix == "" {
+		c.CookieNamePrefix = "gate-"
+	}
+	if len(c.Secret) != 32 {
+		return nil, serr.Errorf("must provide a secret of length 32")
+	}
+	if len(c.Users) == 0 {
+		return nil, serr.Errorf("must configure some users")
+	}
+	return &Verifier{
+		config:             c,
+		registerCookieName: c.CookieNamePrefix + "r",
+		signInCookieName:   c.CookieNamePrefix + "l",
+		authCookieName:     c.CookieNamePrefix + "a",
+		authCookieSecret:   hkdfExpand(c.Secret, "authCookie"),
+		nextSecret:         hkdfExpand(c.Secret, "next"),
+	}, nil
+}
+
+// SignInURL returns where to send users to sign in.
+func (a *Verifier) SignInURL() string {
+	return a.config.SignInURL
+}
+
+// App provides the HTTP UI for caddygate.
+type App struct {
+	verifier *Verifier
+	serve    ServeConfig
+
+	registerCookieSecret []byte
+	signInCookieSecret   []byte
+
+	wa         *webauthn.WebAuthn
+	keys       keyStore
+	invites    inviteStore
+	challenges challengeStore
+	handler    http.HandlerFunc
+}
+
+// Verifier returns the Verifier for the sessions this App creates.
+func (a *App) Verifier() *Verifier {
+	return a.verifier
 }
 
 func hkdfExpand(key []byte, info string) []byte {
@@ -354,12 +412,38 @@ func secureHandler(h http.Handler) http.HandlerFunc {
 	}
 }
 
-// NewApp validates the config, sets defaults and returns an functional App.
-func NewApp(c Config) (*App, error) {
+// urlOrigin returns the scheme and host of the URL, or "" if it has neither.
+func urlOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// NewApp validates the configs, sets defaults and returns a functional App.
+// The relying party and the shared config default from each other, since they
+// are almost always the same domain and origin.
+func NewApp(c Config, s ServeConfig) (*App, error) {
+	if s.RP.ID == "" {
+		s.RP.ID = strings.TrimPrefix(c.CookieDomain, ".")
+	}
+	if len(s.RP.Origins) == 0 {
+		if origin := urlOrigin(c.SignInURL); origin != "" {
+			s.RP.Origins = []string{origin}
+		}
+	}
+	if c.CookieDomain == "" {
+		c.CookieDomain = s.RP.ID
+	}
+	if c.SignInURL == "" && len(s.RP.Origins) > 0 {
+		c.SignInURL = s.RP.Origins[0]
+	}
+
 	wa, err := webauthn.New(&webauthn.Config{
-		RPID:          c.RP.ID,
-		RPDisplayName: c.RP.DisplayName,
-		RPOrigins:     c.RP.Origins,
+		RPID:          s.RP.ID,
+		RPDisplayName: s.RP.DisplayName,
+		RPOrigins:     s.RP.Origins,
 		// Passkeys are the only factor, so require the authenticator to verify
 		// the user (PIN, biometric) and not just their presence (a tap). This
 		// applies to both registration and sign-in ceremonies.
@@ -376,60 +460,40 @@ func NewApp(c Config) (*App, error) {
 		return nil, serr.Wrap(err)
 	}
 
-	if c.DataDir == "" {
+	if s.DataDir == "" {
 		return nil, serr.Errorf("must specify DataDir in config")
 	}
-	if c.CookiePath == "" {
-		c.CookiePath = "/"
+	if s.AuthBaseURL == "" {
+		s.AuthBaseURL = s.RP.Origins[0]
 	}
-	if c.CookieDomain == "" {
-		c.CookieDomain = wa.Config.RPID
+	if s.DefaultNext == "" {
+		s.DefaultNext = "/"
 	}
-	if c.AuthBaseURL == "" {
-		c.AuthBaseURL = wa.Config.RPOrigins[0]
+	if s.InviteTTL == 0 {
+		s.InviteTTL = time.Hour
 	}
-	if c.SignInURL == "" {
-		c.SignInURL = wa.Config.RPOrigins[0]
-	}
-	if c.DefaultNext == "" {
-		c.DefaultNext = "/"
-	}
-	if c.InviteTTL == 0 {
-		c.InviteTTL = time.Hour
-	}
-	if c.CookieTTL == 0 {
-		c.CookieTTL = time.Hour * 24 * 30
-	}
-	if c.CookieNamePrefix == "" {
-		c.CookieNamePrefix = "gate-"
-	}
-	if len(c.Secret) != 32 {
-		return nil, serr.Errorf("must provide a secret of length 32")
+
+	v, err := NewVerifier(c)
+	if err != nil {
+		return nil, err
 	}
 
 	a := &App{
-		Config:               c,
+		verifier:             v,
+		serve:                s,
 		wa:                   wa,
-		registerCookieName:   c.CookieNamePrefix + "r",
-		signInCookieName:     c.CookieNamePrefix + "l",
-		authCookieName:       c.CookieNamePrefix + "a",
 		registerCookieSecret: hkdfExpand(c.Secret, "registerCookie"),
-		authCookieSecret:     hkdfExpand(c.Secret, "authCookie"),
 		signInCookieSecret:   hkdfExpand(c.Secret, "signInCookie"),
-		nextSecret:           hkdfExpand(c.Secret, "next"),
 	}
-	a.invites.ttl = a.Config.InviteTTL
+	a.invites.ttl = a.serve.InviteTTL
 
-	a.keys.path = filepath.Join(c.DataDir, "keys.json")
+	a.keys.path = filepath.Join(s.DataDir, "keys.json")
 	if err := a.keys.Reload(); err != nil {
 		return nil, err
 	}
 
-	if len(a.Config.Users) == 0 {
-		return nil, serr.Errorf("must configure some users")
-	}
 	if len(a.keys.All()) == 0 {
-		for _, u := range a.Config.Users {
+		for _, u := range a.verifier.config.Users {
 			if slices.Contains(u.Tags, tagAdmin) {
 				i := &invite{UserID: u.ID}
 				if err := a.invites.Create(i); err != nil {
@@ -451,9 +515,9 @@ func NewApp(c Config) (*App, error) {
 
 func (a *App) registerCookie() http.Cookie {
 	return http.Cookie{
-		Name:     a.registerCookieName,
-		Path:     a.Config.CookiePath,
-		Domain:   a.Config.CookieDomain,
+		Name:     a.verifier.registerCookieName,
+		Path:     a.verifier.config.CookiePath,
+		Domain:   a.verifier.config.CookieDomain,
 		MaxAge:   maxAge(ceremonyTTL),
 		Secure:   true,
 		HttpOnly: true,
@@ -463,9 +527,9 @@ func (a *App) registerCookie() http.Cookie {
 
 func (a *App) signInCookie() http.Cookie {
 	return http.Cookie{
-		Name:     a.signInCookieName,
-		Path:     a.Config.CookiePath,
-		Domain:   a.Config.CookieDomain,
+		Name:     a.verifier.signInCookieName,
+		Path:     a.verifier.config.CookiePath,
+		Domain:   a.verifier.config.CookieDomain,
 		MaxAge:   maxAge(ceremonyTTL),
 		Secure:   true,
 		HttpOnly: true,
@@ -473,20 +537,20 @@ func (a *App) signInCookie() http.Cookie {
 	}
 }
 
-func (a *App) authCookie() http.Cookie {
+func (a *Verifier) authCookie() http.Cookie {
 	return http.Cookie{
 		Name:     a.authCookieName,
-		Path:     a.Config.CookiePath,
-		Domain:   a.Config.CookieDomain,
-		MaxAge:   maxAge(a.Config.CookieTTL),
+		Path:     a.config.CookiePath,
+		Domain:   a.config.CookieDomain,
+		MaxAge:   maxAge(a.config.CookieTTL),
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	}
 }
 
-func (a *App) userByID(id string) (User, error) {
-	for _, user := range a.Config.Users {
+func (a *Verifier) userByID(id string) (User, error) {
+	for _, user := range a.config.Users {
 		if user.ID == id {
 			return user, nil
 		}
@@ -496,7 +560,7 @@ func (a *App) userByID(id string) (User, error) {
 
 func (a *App) discoverUser(rawID, userHandle []byte) (webauthn.User, error) {
 	expectedID := string(userHandle)
-	user, err := a.userByID(expectedID)
+	user, err := a.verifier.userByID(expectedID)
 	if err != nil {
 		return nil, err
 	}
@@ -519,7 +583,7 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 // CurrentUser returns the current logged in User.
 // Use IsNotSignedInError to check if the error indicates no signed in User.
 // Errors will trigger clearing the cookie.
-func (a *App) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) {
+func (a *Verifier) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) {
 	userID, err := sookie.Get[string](a.authCookieSecret, r, a.authCookieName)
 	if err != nil {
 		sookie.Del(w, r, a.authCookie()) // clear faulty cookies
@@ -540,7 +604,7 @@ func (a *App) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) 
 // before passing the request upstream, so the protected backends never see the
 // auth cookie, which would otherwise let them impersonate the user on every
 // other guarded site.
-func (a *App) StripCookies(r *http.Request) {
+func (a *Verifier) StripCookies(r *http.Request) {
 	lines := r.Header.Values("Cookie")
 	if len(lines) == 0 {
 		return
@@ -566,14 +630,14 @@ func (a *App) StripCookies(r *http.Request) {
 }
 
 // SealNextURL seals the URL for use as the next parameter in the sign-in flow.
-func (a *App) SealNextURL(u string) (string, error) {
+func (a *Verifier) SealNextURL(u string) (string, error) {
 	return sookie.Seal(a.nextSecret, time.Now().Add(time.Hour*24), u)
 }
 
 // OpenNextURL opens the sealed URL from the next parameter in the sign-in flow.
 // Only https URLs on the cookie domain are accepted, since those are the only
 // places the auth cookie works.
-func (a *App) OpenNextURL(u string) (string, error) {
+func (a *Verifier) OpenNextURL(u string) (string, error) {
 	raw, err := sookie.Open[string](a.nextSecret, u)
 	if err != nil {
 		return "", err
@@ -584,13 +648,13 @@ func (a *App) OpenNextURL(u string) (string, error) {
 	return raw, nil
 }
 
-func (a *App) isAllowedNext(raw string) bool {
+func (a *Verifier) isAllowedNext(raw string) bool {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.User != nil {
 		return false
 	}
 	host := strings.ToLower(parsed.Hostname())
-	domain := strings.ToLower(strings.TrimPrefix(a.Config.CookieDomain, "."))
+	domain := strings.ToLower(strings.TrimPrefix(a.config.CookieDomain, "."))
 	return host == domain || strings.HasSuffix(host, "."+domain)
 }
 
@@ -606,7 +670,7 @@ func (a *App) inviteUser(r *http.Request) (*invite, waUser, error) {
 	if err != nil {
 		return nil, waUser{}, err
 	}
-	user, err := a.userByID(invite.UserID)
+	user, err := a.verifier.userByID(invite.UserID)
 	if err != nil {
 		return nil, waUser{}, err
 	}
@@ -621,7 +685,7 @@ func (a *App) inviteNotFound() error {
 }
 
 func (a *App) inviteURL(i *invite) string {
-	return fmt.Sprintf("%s/register/%s", a.Config.AuthBaseURL, i.ID)
+	return fmt.Sprintf("%s/register/%s", a.serve.AuthBaseURL, i.ID)
 }
 
 const inputUserID = "userID"
@@ -639,7 +703,7 @@ func (a *App) invitePost(w http.ResponseWriter, r *http.Request) error {
 		return serr.Errorf("only admins can create invites")
 	}
 
-	invitee, err := a.userByID(r.FormValue(inputUserID))
+	invitee, err := a.verifier.userByID(r.FormValue(inputUserID))
 	if err != nil {
 		return httpError(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
@@ -743,7 +807,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	sessionData, err := sookie.Get[webauthn.SessionData](
-		a.registerCookieSecret, r, a.registerCookieName)
+		a.registerCookieSecret, r, a.verifier.registerCookieName)
 	if err != nil {
 		sookie.Del(w, r, a.registerCookie()) // clear faulty cookies
 		return serr.Wrap(err)
@@ -776,11 +840,11 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := sookie.Set(a.authCookieSecret, w, user.user.ID, a.authCookie()); err != nil {
+	if err := sookie.Set(a.verifier.authCookieSecret, w, user.user.ID, a.verifier.authCookie()); err != nil {
 		return serr.Wrap(err)
 	}
 
-	http.Redirect(w, r, a.Config.DefaultNext, http.StatusSeeOther)
+	http.Redirect(w, r, a.serve.DefaultNext, http.StatusSeeOther)
 	return nil
 }
 
@@ -788,7 +852,7 @@ const pPkGet = "/pk-get"
 
 func (a *App) validatePasskeyLogin(w http.ResponseWriter, r *http.Request) (User, error) {
 	sessionData, err := sookie.Get[webauthn.SessionData](
-		a.signInCookieSecret, r, a.signInCookieName)
+		a.signInCookieSecret, r, a.verifier.signInCookieName)
 	if err != nil {
 		sookie.Del(w, r, a.signInCookie()) // clear faulty cookies
 		return User{}, serr.Wrap(err)
@@ -830,20 +894,20 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := sookie.Set(a.authCookieSecret, w, user.ID, a.authCookie()); err != nil {
+	if err := sookie.Set(a.verifier.authCookieSecret, w, user.ID, a.verifier.authCookie()); err != nil {
 		return serr.Wrap(err)
 	}
 
 	var nextURL string
 	if givenNext := r.FormValue(inputNext); givenNext != "" {
-		nextURL, err = a.OpenNextURL(givenNext)
+		nextURL, err = a.verifier.OpenNextURL(givenNext)
 		if err != nil {
 			log.Println(err)
 		}
 
 	}
 	if nextURL == "" {
-		nextURL = a.Config.DefaultNext
+		nextURL = a.serve.DefaultNext
 	}
 
 	http.Redirect(w, r, nextURL, http.StatusSeeOther)
@@ -853,13 +917,13 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 const pSignOut = "/sign-out"
 
 func (a *App) signOutPost(w http.ResponseWriter, r *http.Request) error {
-	sookie.Del(w, r, a.authCookie())
+	sookie.Del(w, r, a.verifier.authCookie())
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 	return nil
 }
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) error {
-	user, err := a.CurrentUser(w, r)
+	user, err := a.verifier.CurrentUser(w, r)
 	if err != nil {
 		if !IsNotSignedInError(err) {
 			log.Println(err)
@@ -879,7 +943,7 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) error {
 				h.Method(http.MethodPost),
 				h.H3(g.Text("Create Invite")),
 				h.Select(h.Name(inputUserID),
-					g.Map(a.Config.Users, func(u User) g.Node {
+					g.Map(a.verifier.config.Users, func(u User) g.Node {
 						return h.Option(h.Value(u.ID), g.Text(u.Name))
 					})),
 				h.Input(h.Type("hidden"), h.Name(inputJSON)),

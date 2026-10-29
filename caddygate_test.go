@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/daaku/caddy-gate/internal/app"
 	"github.com/daaku/ensure"
@@ -84,11 +87,37 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 				}
 			}`,
 			&GateServe{
-				Config: app.Config{
-					AuthBaseURL: "https://foo.com",
+				Config: &app.Config{
 					Users: []app.User{
 						{ID: "admin"},
 					},
+				},
+				ServeConfig: app.ServeConfig{
+					AuthBaseURL: "https://foo.com",
+				},
+			},
+		},
+		{
+			"gate default serve keyword block",
+			`gate serve {
+				data_dir /foo/bar
+			}`,
+			&GateServe{
+				ServeConfig: app.ServeConfig{
+					DataDir: "/foo/bar",
+				},
+			},
+		},
+		{
+			"gate serve with a zero shared value is still inline",
+			`gate serve {
+				data_dir /foo/bar
+				cookie_ttl 0s
+			}`,
+			&GateServe{
+				Config: &app.Config{},
+				ServeConfig: app.ServeConfig{
+					DataDir: "/foo/bar",
 				},
 			},
 		},
@@ -119,25 +148,13 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 			}`,
 			&GateServe{
 				Name: "example.com",
-				Config: app.Config{
-					DataDir:          "/foo/bar",
+				Config: &app.Config{
 					Secret:           cookieSecret,
-					AuthBaseURL:      "https://foo.com",
 					SignInURL:        "https://auth.foo.com",
-					DefaultNext:      "https://admin.foo.com",
 					CookieDomain:     "foo.com",
 					CookieNamePrefix: "foo",
 					CookiePath:       "/foo",
 					CookieTTL:        time.Hour * 24 * 30,
-					InviteTTL:        time.Hour * 24,
-					RP: app.RelyingParty{
-						ID:          "example.com",
-						DisplayName: "Example",
-						Origins: []string{
-							"https://foo.com",
-							"https://example.com",
-						},
-					},
 					Users: []app.User{
 						{
 							ID:   "zaphod",
@@ -151,6 +168,20 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 						},
 						{
 							ID: "marvin",
+						},
+					},
+				},
+				ServeConfig: app.ServeConfig{
+					DataDir:     "/foo/bar",
+					AuthBaseURL: "https://foo.com",
+					DefaultNext: "https://admin.foo.com",
+					InviteTTL:   time.Hour * 24,
+					RP: app.RelyingParty{
+						ID:          "example.com",
+						DisplayName: "Example",
+						Origins: []string{
+							"https://foo.com",
+							"https://example.com",
 						},
 					},
 				},
@@ -248,29 +279,30 @@ func TestGateAppStartStop(t *testing.T) {
 func TestMissingAssociatedConfigDefault(t *testing.T) {
 	g := GateGuard{gate: &Gate{}}
 	ensure.Err(t, g.ServeHTTP(nil, nil, nil),
-		regexp.MustCompile("default gate guard used without defining associated default serve"))
+		regexp.MustCompile("default gate guard used without defining the default gate config"))
 }
 
 func TestMissingAssociatedConfigNamed(t *testing.T) {
 	g := GateGuard{Name: "foo", gate: &Gate{}}
 	ensure.Err(t, g.ServeHTTP(nil, nil, nil),
-		regexp.MustCompile(`named gate guard "foo" used without defining associated named serve`))
+		regexp.MustCompile(`gate "foo" guard used without defining the gate "foo" config`))
 }
 
 func newValidApp(t testing.TB) *app.App {
 	secret := make([]byte, 32)
 	rand.Read(secret)
 	a, err := app.NewApp(app.Config{
+		Secret: secret,
+		Users: []app.User{
+			{ID: "zaphod", Tags: []string{"admin"}},
+			{ID: "marvin"},
+		},
+	}, app.ServeConfig{
 		DataDir: t.TempDir(),
-		Secret:  secret,
 		RP: app.RelyingParty{
 			ID:          "foo.com",
 			DisplayName: "Foo",
 			Origins:     []string{"https://foo.com"},
-		},
-		Users: []app.User{
-			{ID: "zaphod", Tags: []string{"admin"}},
-			{ID: "marvin"},
 		},
 	})
 	ensure.Nil(t, err)
@@ -281,8 +313,8 @@ func TestGateIsNotSignedIn(t *testing.T) {
 	a := newValidApp(t)
 	g := GateGuard{
 		gate: &Gate{
-			app: map[string]*app.App{
-				"": a,
+			verifiers: map[string]*app.Verifier{
+				"": a.Verifier(),
 			},
 		},
 	}
@@ -318,22 +350,23 @@ func TestGateIsNotSignedInNextURL(t *testing.T) {
 			secret := make([]byte, 32)
 			rand.Read(secret)
 			a, err := app.NewApp(app.Config{
+				Secret: secret,
+				Users: []app.User{
+					{ID: "neo"},
+				},
+			}, app.ServeConfig{
 				DataDir: t.TempDir(),
-				Secret:  secret,
 				RP: app.RelyingParty{
 					ID:          "example.com",
 					DisplayName: "Example",
 					Origins:     []string{"https://auth.example.com"},
 				},
-				Users: []app.User{
-					{ID: "neo"},
-				},
 			})
 			ensure.Nil(t, err)
 			g := GateGuard{
 				gate: &Gate{
-					app: map[string]*app.App{
-						"": a,
+					verifiers: map[string]*app.Verifier{
+						"": a.Verifier(),
 					},
 				},
 			}
@@ -367,15 +400,16 @@ func newSignedInApp(t testing.TB) (*app.App, string) {
 	secret := make([]byte, 32)
 	rand.Read(secret)
 	a, err := app.NewApp(app.Config{
+		Secret: secret,
+		Users: []app.User{
+			{ID: "neo"},
+		},
+	}, app.ServeConfig{
 		DataDir: t.TempDir(),
-		Secret:  secret,
 		RP: app.RelyingParty{
 			ID:          "example.com",
 			DisplayName: "Example",
 			Origins:     []string{"https://auth.example.com"},
-		},
-		Users: []app.User{
-			{ID: "neo"},
 		},
 	})
 	ensure.Nil(t, err)
@@ -390,8 +424,8 @@ func TestGateStripsGateCookies(t *testing.T) {
 	a, auth := newSignedInApp(t)
 	g := GateGuard{
 		gate: &Gate{
-			app: map[string]*app.App{
-				"": a,
+			verifiers: map[string]*app.Verifier{
+				"": a.Verifier(),
 			},
 		},
 	}
@@ -414,8 +448,8 @@ func TestGateInvalidCookieRedirectsToSignIn(t *testing.T) {
 	a := newValidApp(t)
 	g := GateGuard{
 		gate: &Gate{
-			app: map[string]*app.App{
-				"": a,
+			verifiers: map[string]*app.Verifier{
+				"": a.Verifier(),
 			},
 		},
 	}
@@ -441,8 +475,8 @@ func TestGateSignedInWithoutLocalKeys(t *testing.T) {
 	g := GateGuard{
 		HeaderUserID: true,
 		gate: &Gate{
-			app: map[string]*app.App{
-				"": a,
+			verifiers: map[string]*app.Verifier{
+				"": a.Verifier(),
 			},
 		},
 	}
@@ -466,8 +500,8 @@ func TestGateStripsSpoofedIdentityHeaders(t *testing.T) {
 			HeaderUserID:   enabled,
 			HeaderUserTags: enabled,
 			gate: &Gate{
-				app: map[string]*app.App{
-					"": a,
+				verifiers: map[string]*app.Verifier{
+					"": a.Verifier(),
 				},
 			},
 		}
@@ -496,4 +530,246 @@ func TestGateStripsSpoofedIdentityHeaders(t *testing.T) {
 			ensure.DeepEqual(t, upstream.Header.Get("X-Caddy-Gate-User-ID"), "neo")
 		}
 	}
+}
+
+func newSecretB64(t testing.TB) ([]byte, string) {
+	t.Helper()
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	return secret, base64.RawURLEncoding.EncodeToString(secret)
+}
+
+func TestParseGlobalOption(t *testing.T) {
+	secret, secretB64 := newSecretB64(t)
+	var existing any
+	for _, input := range []string{
+		`gate {
+			secret "` + secretB64 + `"
+			cookie_domain example.com
+			sign_in_url https://auth.example.com
+			users {
+				neo "Neo" admin
+			}
+		}`,
+		`gate other.com {
+			secret "` + secretB64 + `"
+			cookie_domain other.com
+			sign_in_url https://auth.other.com
+			users {
+				trinity
+			}
+		}`,
+	} {
+		var err error
+		existing, err = parseGlobalOption(caddyfile.NewTestDispenser(input), existing)
+		ensure.Nil(t, err)
+	}
+	gateApp, ok := existing.(httpcaddyfile.App)
+	ensure.True(t, ok)
+	ensure.DeepEqual(t, gateApp.Name, "gate")
+	var gate Gate
+	ensure.Nil(t, json.Unmarshal(gateApp.Value, &gate))
+	ensure.DeepEqual(t, gate.Configs, map[string]app.Config{
+		"": {
+			Secret:       secret,
+			CookieDomain: "example.com",
+			SignInURL:    "https://auth.example.com",
+			Users:        app.Users{{ID: "neo", Name: "Neo", Tags: []string{"admin"}}},
+		},
+		"other.com": {
+			Secret:       secret,
+			CookieDomain: "other.com",
+			SignInURL:    "https://auth.other.com",
+			Users:        app.Users{{ID: "trinity"}},
+		},
+	})
+}
+
+func TestParseGlobalOptionErrors(t *testing.T) {
+	cases := []struct{ name, input, err string }{
+		{
+			"serve only option",
+			`gate {
+				data_dir /foo
+			}`,
+			"unrecognized key: data_dir",
+		},
+		{
+			"relying party",
+			`gate {
+				rp {
+					id example.com
+				}
+			}`,
+			"unrecognized key: rp",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := parseGlobalOption(caddyfile.NewTestDispenser(c.input), nil)
+			ensure.StringContains(t, err.Error(), c.err)
+		})
+	}
+}
+
+func TestParseGlobalOptionRedefined(t *testing.T) {
+	existing, err := parseGlobalOption(caddyfile.NewTestDispenser(`gate { cookie_domain a.com }`), nil)
+	ensure.Nil(t, err)
+	_, err = parseGlobalOption(caddyfile.NewTestDispenser(`gate { cookie_domain b.com }`), existing)
+	ensure.StringContains(t, err.Error(), "default gate config redefined")
+}
+
+func newGlobalConfig(t testing.TB) app.Config {
+	t.Helper()
+	secret, _ := newSecretB64(t)
+	return app.Config{
+		Secret:       secret,
+		CookieDomain: "example.com",
+		SignInURL:    "https://auth.example.com",
+		Users:        app.Users{{ID: "neo", Tags: []string{"admin"}}},
+	}
+}
+
+func newProvisionedGate(t testing.TB, configs map[string]app.Config) *Gate {
+	t.Helper()
+	g := &Gate{Configs: configs}
+	ensure.Nil(t, g.Provision(caddy.Context{}))
+	return g
+}
+
+func TestGateProvisionInvalidConfig(t *testing.T) {
+	c := newGlobalConfig(t)
+	c.SignInURL = ""
+	g := &Gate{Configs: map[string]app.Config{"example.com": c}}
+	ensure.Err(t, g.Provision(caddy.Context{}),
+		regexp.MustCompile(`gate "example.com": .*must specify sign_in_url`))
+}
+
+func TestServeWithGlobalConfig(t *testing.T) {
+	gate := newProvisionedGate(t, map[string]app.Config{"": newGlobalConfig(t)})
+	s := GateServe{ServeConfig: app.ServeConfig{DataDir: t.TempDir()}}
+	ensure.Nil(t, s.provision(gate))
+	ensure.True(t, gate.served[""])
+	ensure.True(t, gate.verifiers[""] == s.app.Verifier())
+}
+
+func TestServeWithInlineConfig(t *testing.T) {
+	gate := newProvisionedGate(t, nil)
+	c := newGlobalConfig(t)
+	c.CookieDomain, c.SignInURL = "", ""
+	s := GateServe{
+		Config: &c,
+		ServeConfig: app.ServeConfig{
+			DataDir: t.TempDir(),
+			RP: app.RelyingParty{
+				ID:      "example.com",
+				Origins: []string{"https://auth.example.com"},
+			},
+		},
+	}
+	ensure.Nil(t, s.provision(gate))
+	ensure.Nil(t, gate.Start())
+	v := gate.verifiers[""]
+	ensure.True(t, v == s.app.Verifier())
+	// the shared config defaults from the relying party
+	ensure.DeepEqual(t, v.SignInURL(), "https://auth.example.com")
+}
+
+func TestServeProvisionErrors(t *testing.T) {
+	gate := newProvisionedGate(t, map[string]app.Config{"": newGlobalConfig(t)})
+
+	both := GateServe{
+		Config:      new(newGlobalConfig(t)),
+		ServeConfig: app.ServeConfig{DataDir: t.TempDir()},
+	}
+	ensure.Err(t, both.provision(gate),
+		regexp.MustCompile("default gate config defined both globally and inline"))
+
+	neither := GateServe{Name: "foo", ServeConfig: app.ServeConfig{DataDir: t.TempDir()}}
+	ensure.Err(t, neither.provision(gate),
+		regexp.MustCompile(`gate "foo" serve used without defining the gate "foo" config`))
+
+	first := GateServe{ServeConfig: app.ServeConfig{DataDir: t.TempDir()}}
+	ensure.Nil(t, first.provision(gate))
+	again := GateServe{ServeConfig: app.ServeConfig{DataDir: t.TempDir()}}
+	ensure.Err(t, again.provision(gate), regexp.MustCompile("default gate serve redefined"))
+}
+
+// A guard only needs the global config, so it works on a machine that
+// doesn't serve sign-in.
+func TestGuardWithGlobalConfigOnly(t *testing.T) {
+	c := newGlobalConfig(t)
+	gate := newProvisionedGate(t, map[string]app.Config{"": c})
+	g := GateGuard{gate: gate}
+	gate.guarded = append(gate.guarded, g.Name)
+	ensure.Nil(t, gate.Start())
+
+	authSecret, err := hkdf.Expand(sha256.New, c.Secret, "authCookie", 32)
+	ensure.Nil(t, err)
+	auth, err := sookie.Seal(authSecret, time.Now().Add(time.Hour), "neo")
+	ensure.Nil(t, err)
+	r := httptest.NewRequest("GET", "/", nil)
+	r.AddCookie(&http.Cookie{Name: "gate-a", Value: auth})
+	var upstream *http.Request
+	ensure.Nil(t, g.ServeHTTP(httptest.NewRecorder(), r, caddyhttp.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) error {
+			upstream = r
+			return nil
+		})))
+	ensure.NotNil(t, upstream)
+
+	r = httptest.NewRequest("GET", "/", nil)
+	w := httptest.NewRecorder()
+	ensure.Nil(t, g.ServeHTTP(w, r, nil))
+	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
+	ensure.StringContains(t, w.Header().Get("Location"), "https://auth.example.com?next=")
+}
+
+func TestGateStartGuardWithoutConfig(t *testing.T) {
+	gate := newProvisionedGate(t, map[string]app.Config{"": newGlobalConfig(t)})
+	gate.guarded = []string{"", "foo"}
+	ensure.Err(t, gate.Start(),
+		regexp.MustCompile(`gate "foo" guard used without defining the gate "foo" config`))
+}
+
+func TestAdaptCaddyfile(t *testing.T) {
+	_, secretB64 := newSecretB64(t)
+	input := `{
+		gate {
+			secret "` + secretB64 + `"
+			cookie_domain example.com
+			sign_in_url https://auth.example.com
+			users {
+				neo
+			}
+		}
+	}
+
+	http://auth.example.com {
+		gate serve {
+			data_dir ` + t.TempDir() + `
+		}
+	}
+
+	http://admin.example.com {
+		gate with admin
+	}`
+	adapter := caddyfile.Adapter{ServerType: httpcaddyfile.ServerType{}}
+	cfgJSON, _, err := adapter.Adapt([]byte(input), nil)
+	ensure.Nil(t, err)
+	var cfg struct {
+		Apps struct {
+			Gate Gate `json:"gate"`
+		} `json:"apps"`
+	}
+	ensure.Nil(t, json.Unmarshal(cfgJSON, &cfg))
+	ensure.DeepEqual(t, cfg.Apps.Gate.Configs[""].CookieDomain, "example.com")
+	ensure.Nil(t, caddy.Validate(mustConfig(t, cfgJSON)))
+}
+
+func mustConfig(t testing.TB, cfgJSON []byte) *caddy.Config {
+	t.Helper()
+	var cfg caddy.Config
+	ensure.Nil(t, json.Unmarshal(cfgJSON, &cfg))
+	return &cfg
 }

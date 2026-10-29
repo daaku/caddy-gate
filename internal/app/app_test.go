@@ -35,16 +35,17 @@ func newTestApp(t testing.TB) *App {
 func newTestAppWithSecret(t testing.TB, secret []byte) *App {
 	t.Helper()
 	a, err := NewApp(Config{
+		Secret: secret,
+		Users: Users{
+			{ID: "zaphod", Tags: []string{tagAdmin}},
+			{ID: "marvin"},
+		},
+	}, ServeConfig{
 		DataDir: t.TempDir(),
-		Secret:  secret,
 		RP: RelyingParty{
 			ID:          "example.com",
 			DisplayName: "Example",
 			Origins:     []string{"https://auth.example.com"},
-		},
-		Users: Users{
-			{ID: "zaphod", Tags: []string{tagAdmin}},
-			{ID: "marvin"},
 		},
 	})
 	ensure.Nil(t, err)
@@ -63,7 +64,7 @@ func TestSignInRequiresUserVerification(t *testing.T) {
 
 func TestCookiesAreSameSiteLax(t *testing.T) {
 	a := newTestApp(t)
-	for _, c := range []http.Cookie{a.authCookie(), a.signInCookie(), a.registerCookie()} {
+	for _, c := range []http.Cookie{a.verifier.authCookie(), a.signInCookie(), a.registerCookie()} {
 		ensure.DeepEqual(t, c.SameSite, http.SameSiteLaxMode)
 	}
 	w := httptest.NewRecorder()
@@ -92,10 +93,10 @@ func TestIsAllowedNext(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.next, func(t *testing.T) {
-			ensure.DeepEqual(t, a.isAllowedNext(c.next), c.allowed)
-			sealed, err := a.SealNextURL(c.next)
+			ensure.DeepEqual(t, a.verifier.isAllowedNext(c.next), c.allowed)
+			sealed, err := a.verifier.SealNextURL(c.next)
 			ensure.Nil(t, err)
-			_, err = a.OpenNextURL(sealed)
+			_, err = a.verifier.OpenNextURL(sealed)
 			ensure.DeepEqual(t, err == nil, c.allowed)
 		})
 	}
@@ -105,16 +106,17 @@ func TestBootstrapInviteIsForFirstAdmin(t *testing.T) {
 	secret := make([]byte, 32)
 	rand.Read(secret)
 	a, err := NewApp(Config{
+		Secret: secret,
+		Users: Users{
+			{ID: "marvin"},
+			{ID: "zaphod", Tags: []string{tagAdmin}},
+		},
+	}, ServeConfig{
 		DataDir: t.TempDir(),
-		Secret:  secret,
 		RP: RelyingParty{
 			ID:          "example.com",
 			DisplayName: "Example",
 			Origins:     []string{"https://auth.example.com"},
-		},
-		Users: Users{
-			{ID: "marvin"},
-			{ID: "zaphod", Tags: []string{tagAdmin}},
 		},
 	})
 	ensure.Nil(t, err)
@@ -155,7 +157,7 @@ func TestRegisterCredentialConcurrent(t *testing.T) {
 	for i := range n {
 		wg.Go(func() {
 			credential := webauthn.Credential{ID: fmt.Appendf(nil, "credential-%d", i)}
-			ensure.Nil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
+			ensure.Nil(t, a.keys.RegisterCredential(a.verifier.config.Users[1], &credential))
 		})
 	}
 	wg.Wait()
@@ -173,15 +175,15 @@ func TestRegisterCredentialWriteFailure(t *testing.T) {
 	// a directory where the file should be makes the write fail
 	ensure.Nil(t, os.Mkdir(a.keys.path, 0o700))
 	credential := webauthn.Credential{ID: []byte("credential")}
-	ensure.NotNil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
+	ensure.NotNil(t, a.keys.RegisterCredential(a.verifier.config.Users[1], &credential))
 	ensure.DeepEqual(t, len(a.keys.All()), 0)
 }
 
 func TestRegisterCredentialRejectsDuplicateID(t *testing.T) {
 	a := newTestApp(t)
 	credential := webauthn.Credential{ID: []byte("credential")}
-	ensure.Nil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
-	for _, u := range a.Config.Users {
+	ensure.Nil(t, a.keys.RegisterCredential(a.verifier.config.Users[1], &credential))
+	for _, u := range a.verifier.config.Users {
 		err := a.keys.RegisterCredential(u, &credential)
 		ensure.True(t, errors.Is(err, errCredentialExists))
 	}
@@ -191,8 +193,8 @@ func TestRegisterCredentialRejectsDuplicateID(t *testing.T) {
 func TestRegistrationExcludesExistingCredentials(t *testing.T) {
 	a := newTestApp(t)
 	credential := webauthn.Credential{ID: []byte("credential")}
-	ensure.Nil(t, a.keys.RegisterCredential(a.Config.Users[1], &credential))
-	i := &invite{UserID: a.Config.Users[1].ID}
+	ensure.Nil(t, a.keys.RegisterCredential(a.verifier.config.Users[1], &credential))
+	i := &invite{UserID: a.verifier.config.Users[1].ID}
 	ensure.Nil(t, a.invites.Create(i))
 
 	w := httptest.NewRecorder()
@@ -250,11 +252,11 @@ func (ta *testAuthenticator) assert(t testing.TB, a *App, challenge string, flag
 	clientData, err := json.Marshal(map[string]any{
 		"type":        "webauthn.get",
 		"challenge":   challenge,
-		"origin":      a.Config.RP.Origins[0],
+		"origin":      a.serve.RP.Origins[0],
 		"crossOrigin": false,
 	})
 	ensure.Nil(t, err)
-	rpIDHash := sha256.Sum256([]byte(a.Config.RP.ID))
+	rpIDHash := sha256.Sum256([]byte(a.serve.RP.ID))
 	authData := append(rpIDHash[:], flags, 0, 0, 0, 0)
 	clientDataHash := sha256.Sum256(clientData)
 	digest := sha256.Sum256(append(slices.Clone(authData), clientDataHash[:]...))
@@ -302,7 +304,7 @@ func postSignIn(a *App, cookies []*http.Cookie, response string) *httptest.Respo
 
 func authCookieFrom(a *App, w *httptest.ResponseRecorder) *http.Cookie {
 	for _, c := range w.Result().Cookies() {
-		if c.Name == a.authCookieName && c.Value != "" {
+		if c.Name == a.verifier.authCookieName && c.Value != "" {
 			return c
 		}
 	}
@@ -311,7 +313,7 @@ func authCookieFrom(a *App, w *httptest.ResponseRecorder) *http.Cookie {
 
 func TestSignIn(t *testing.T) {
 	a := newTestApp(t)
-	ta := newTestAuthenticator(t, a, a.Config.Users[1])
+	ta := newTestAuthenticator(t, a, a.verifier.config.Users[1])
 	challenge, cookies := beginSignIn(t, a)
 	w := postSignIn(a, cookies, ta.assert(t, a, challenge, flagUserPresent|flagUserVerified))
 	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
@@ -320,14 +322,14 @@ func TestSignIn(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.AddCookie(auth)
-	user, err := a.CurrentUser(httptest.NewRecorder(), r)
+	user, err := a.verifier.CurrentUser(httptest.NewRecorder(), r)
 	ensure.Nil(t, err)
 	ensure.DeepEqual(t, user.ID, ta.user.ID)
 }
 
 func TestSignInWithoutUserVerificationFails(t *testing.T) {
 	a := newTestApp(t)
-	ta := newTestAuthenticator(t, a, a.Config.Users[1])
+	ta := newTestAuthenticator(t, a, a.verifier.config.Users[1])
 	challenge, cookies := beginSignIn(t, a)
 	w := postSignIn(a, cookies, ta.assert(t, a, challenge, flagUserPresent))
 	ensure.DeepEqual(t, w.Code, http.StatusInternalServerError)
@@ -336,7 +338,7 @@ func TestSignInWithoutUserVerificationFails(t *testing.T) {
 
 func TestSignInReplayFails(t *testing.T) {
 	a := newTestApp(t)
-	ta := newTestAuthenticator(t, a, a.Config.Users[1])
+	ta := newTestAuthenticator(t, a, a.verifier.config.Users[1])
 	challenge, cookies := beginSignIn(t, a)
 	response := ta.assert(t, a, challenge, flagUserPresent|flagUserVerified)
 
@@ -344,7 +346,7 @@ func TestSignInReplayFails(t *testing.T) {
 	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
 	// the session cookie is cleared after use
 	ensure.StringContains(t, strings.Join(w.Header().Values("Set-Cookie"), "\n"),
-		a.signInCookieName+"=;")
+		a.verifier.signInCookieName+"=;")
 
 	// replaying the same cookie and response is rejected
 	w = postSignIn(a, cookies, response)
@@ -363,7 +365,7 @@ func TestChallengeStoreForgetsExpired(t *testing.T) {
 
 func TestRegistrationRequiresDiscoverableCredential(t *testing.T) {
 	a := newTestApp(t)
-	i := &invite{UserID: a.Config.Users[1].ID}
+	i := &invite{UserID: a.verifier.config.Users[1].ID}
 	ensure.Nil(t, a.invites.Create(i))
 
 	w := httptest.NewRecorder()
@@ -385,7 +387,7 @@ func TestSignInSessionWorksWithoutLocalKeys(t *testing.T) {
 	guard := newTestAppWithSecret(t, secret)
 	ensure.DeepEqual(t, len(guard.keys.All()), 0)
 
-	ta := newTestAuthenticator(t, auth, auth.Config.Users[1])
+	ta := newTestAuthenticator(t, auth, auth.verifier.config.Users[1])
 	challenge, cookies := beginSignIn(t, auth)
 	w := postSignIn(auth, cookies, ta.assert(t, auth, challenge, flagUserPresent|flagUserVerified))
 	ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
@@ -394,7 +396,65 @@ func TestSignInSessionWorksWithoutLocalKeys(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.AddCookie(cookie)
-	user, err := guard.CurrentUser(httptest.NewRecorder(), r)
+	user, err := guard.verifier.CurrentUser(httptest.NewRecorder(), r)
 	ensure.Nil(t, err)
 	ensure.DeepEqual(t, user.ID, ta.user.ID)
+}
+
+func TestNewVerifierErrors(t *testing.T) {
+	valid := func() Config {
+		secret := make([]byte, 32)
+		rand.Read(secret)
+		return Config{
+			Secret:       secret,
+			CookieDomain: "example.com",
+			SignInURL:    "https://auth.example.com",
+			Users:        Users{{ID: "neo"}},
+		}
+	}
+	cases := []struct {
+		name   string
+		modify func(*Config)
+		err    string
+	}{
+		{"cookie domain", func(c *Config) { c.CookieDomain = "" }, "must specify cookie_domain"},
+		{"sign in url", func(c *Config) { c.SignInURL = "" }, "must specify sign_in_url"},
+		{"secret", func(c *Config) { c.Secret = c.Secret[:16] }, "secret of length 32"},
+		{"users", func(c *Config) { c.Users = nil }, "must configure some users"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			config := valid()
+			c.modify(&config)
+			_, err := NewVerifier(config)
+			ensure.StringContains(t, err.Error(), c.err)
+		})
+	}
+	v, err := NewVerifier(valid())
+	ensure.Nil(t, err)
+	ensure.DeepEqual(t, v.config.CookiePath, "/")
+	ensure.DeepEqual(t, v.authCookieName, "gate-a")
+}
+
+func TestNewAppRelyingPartyDefaultsFromSignInURL(t *testing.T) {
+	secret := make([]byte, 32)
+	rand.Read(secret)
+	a, err := NewApp(Config{
+		Secret:       secret,
+		CookieDomain: ".example.com",
+		SignInURL:    "https://auth.example.com/sign-in",
+		Users:        Users{{ID: "neo"}},
+	}, ServeConfig{
+		DataDir: t.TempDir(),
+	})
+	ensure.Nil(t, err)
+	ensure.DeepEqual(t, a.serve.RP.ID, "example.com")
+	ensure.DeepEqual(t, a.serve.RP.Origins, []string{"https://auth.example.com"})
+	ensure.DeepEqual(t, a.serve.AuthBaseURL, "https://auth.example.com")
+}
+
+func TestNewAppConfigDefaultsFromRelyingParty(t *testing.T) {
+	a := newTestApp(t)
+	ensure.DeepEqual(t, a.verifier.config.CookieDomain, "example.com")
+	ensure.DeepEqual(t, a.verifier.SignInURL(), "https://auth.example.com")
 }

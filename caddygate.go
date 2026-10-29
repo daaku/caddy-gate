@@ -2,6 +2,7 @@
 package caddygate
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig"
 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
@@ -29,7 +31,10 @@ const (
 	sWith  = "with"
 )
 
-var _ caddy.App = (*Gate)(nil)
+var (
+	_ caddy.App         = (*Gate)(nil)
+	_ caddy.Provisioner = (*Gate)(nil)
+)
 
 func init() {
 	caddy.RegisterModule(&Gate{})
@@ -40,10 +45,25 @@ func init() {
 			return parseCaddyfile(h.Dispenser)
 		})
 	httpcaddyfile.RegisterDirectiveOrder(sGate, httpcaddyfile.Before, "respond")
+	httpcaddyfile.RegisterGlobalOption(sGate, parseGlobalOption)
+}
+
+// describe names the gate config for use in error messages.
+func describe(name string) string {
+	if name == "" {
+		return "default gate"
+	}
+	return fmt.Sprintf("gate %q", name)
 }
 
 type Gate struct {
-	app map[string]*app.App
+	// Configs are the shared configs from the gate global option, keyed by
+	// name. These are needed on every machine with a guard or serve.
+	Configs map[string]app.Config `json:"configs,omitempty"`
+
+	verifiers map[string]*app.Verifier
+	served    map[string]bool
+	guarded   []string
 }
 
 // CaddyModule returns the Caddy module information.
@@ -54,10 +74,31 @@ func (*Gate) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
+// Provision builds the verifiers for the global configs.
+func (g *Gate) Provision(ctx caddy.Context) error {
+	g.verifiers = make(map[string]*app.Verifier)
+	g.served = make(map[string]bool)
+	for name, c := range g.Configs {
+		v, err := app.NewVerifier(c)
+		if err != nil {
+			return fmt.Errorf("%s: %w", describe(name), err)
+		}
+		g.verifiers[name] = v
+	}
+	return nil
+}
+
 // Start and Stop causes us to implement `caddy.App` and ensures our instance
 // gets cached on `ctx.App` use, which is required for `GateGuard` to access
-// `GateServe` configuration.
+// the configuration. Start runs after all modules have been provisioned, so
+// it's where guards without a config are caught. This includes configs given
+// inline to a serve, which are only known once that serve is provisioned.
 func (g *Gate) Start() error {
+	for _, name := range g.guarded {
+		if g.verifiers[name] == nil {
+			return fmt.Errorf("%s guard used without defining the %s config", describe(name), describe(name))
+		}
+	}
 	return nil
 }
 
@@ -66,8 +107,11 @@ func (g *Gate) Stop() error {
 }
 
 type GateServe struct {
-	Name       string `json:"name,omitempty" caddydecl:"serve"`
-	app.Config `json:"config"`
+	Name string `json:"name,omitempty" caddydecl:"serve"`
+	// Config is only set when the shared config is given inline, instead of
+	// with the gate global option.
+	*app.Config     `json:"config,omitempty"`
+	app.ServeConfig `json:"serve"`
 
 	app *app.App
 }
@@ -91,24 +135,36 @@ func (g *GateServe) Provision(ctx caddy.Context) error {
 	if gate == nil {
 		return fmt.Errorf("%s app is nil", appID)
 	}
+	return g.provision(gate)
+}
 
-	if _, found := gate.app[g.Name]; found {
-		if g.Name == "" {
-			return fmt.Errorf("default gate serve redefined")
-		} else {
-			return fmt.Errorf("named gate serve %q redefined", g.Name)
-		}
+// provision uses the global config if one exists, or else the inline one, and
+// makes it available to guards.
+func (g *GateServe) provision(gate *Gate) error {
+	if gate.served[g.Name] {
+		return fmt.Errorf("%s serve redefined", describe(g.Name))
 	}
 
-	g.app, err = app.NewApp(g.Config)
+	var c app.Config
+	if global, found := gate.Configs[g.Name]; found {
+		if g.Config != nil {
+			return fmt.Errorf("%s config defined both globally and inline in serve", describe(g.Name))
+		}
+		c = global
+	} else if g.Config != nil {
+		c = *g.Config
+	} else {
+		return fmt.Errorf("%s serve used without defining the %s config", describe(g.Name), describe(g.Name))
+	}
+
+	var err error
+	g.app, err = app.NewApp(c, g.ServeConfig)
 	if err != nil {
 		return err
 	}
 
-	if gate.app == nil {
-		gate.app = make(map[string]*app.App)
-	}
-	gate.app[g.Name] = g.app
+	gate.served[g.Name] = true
+	gate.verifiers[g.Name] = g.app.Verifier()
 
 	return nil
 }
@@ -125,9 +181,9 @@ type GateGuard struct {
 	HeaderUserID   bool     `json:"headerUserID,omitempty"`
 	HeaderUserTags bool     `json:"headerUserTags,omitempty"`
 
-	gate *Gate
-	app  *app.App
-	once sync.Once
+	gate     *Gate
+	verifier *app.Verifier
+	once     sync.Once
 }
 
 // CaddyModule returns the Caddy module information.
@@ -149,6 +205,7 @@ func (g *GateGuard) Provision(ctx caddy.Context) error {
 	if g.gate == nil {
 		return fmt.Errorf("%s app is nil", appID)
 	}
+	g.gate.guarded = append(g.gate.guarded, g.Name)
 	return nil
 }
 
@@ -166,17 +223,15 @@ func (g *GateGuard) IsAllowed(u app.User) bool {
 
 // ServeHTTP serves the Gate UI.
 func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+	// Looked up on first use, since a config given inline to a serve is only
+	// known once that serve is provisioned.
 	g.once.Do(func() {
-		g.app = g.gate.app[g.Name]
+		g.verifier = g.gate.verifiers[g.Name]
 	})
-	if g.app == nil {
-		if g.Name == "" {
-			return fmt.Errorf("default gate guard used without defining associated default serve")
-		} else {
-			return fmt.Errorf("named gate guard %q used without defining associated named serve", g.Name)
-		}
+	if g.verifier == nil {
+		return fmt.Errorf("%s guard used without defining the %s config", describe(g.Name), describe(g.Name))
 	}
-	u, err := g.app.CurrentUser(w, r)
+	u, err := g.verifier.CurrentUser(w, r)
 	if app.IsNotSignedInError(err) {
 		// Build the full URL of the page being protected. For origin-form
 		// requests r.URL only carries the path, so fill in the scheme and
@@ -190,11 +245,11 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		if nextURL.Host == "" {
 			nextURL.Host = r.Host
 		}
-		next, err := g.app.SealNextURL(nextURL.String())
+		next, err := g.verifier.SealNextURL(nextURL.String())
 		if err != nil {
 			return fmt.Errorf("unable to seal next url: %w", err)
 		}
-		signInURL := fmt.Sprintf("%s?next=%s", g.app.Config.SignInURL, url.QueryEscape(next))
+		signInURL := fmt.Sprintf("%s?next=%s", g.verifier.SignInURL(), url.QueryEscape(next))
 		http.Redirect(w, r, signInURL, http.StatusSeeOther)
 		return nil
 	}
@@ -207,7 +262,7 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		return nil
 	}
 
-	g.app.StripCookies(r)
+	g.verifier.StripCookies(r)
 
 	const kHeaderUserID = "X-Caddy-Gate-User-ID"
 	delHeaderVariants(r.Header, kHeaderUserID)
@@ -254,13 +309,68 @@ func parseCaddyfile(d *caddyfile.Dispenser) (caddyhttp.MiddlewareHandler, error)
 		}
 		return &g, nil
 	case "{", sServe:
-		d.Reset()
 		// gate {block}
+		// gate serve {block}
 		// gate serve {named} {block}
+		if d.Val() == sServe && d.Next() && d.Val() == "{" {
+			// the default serve, drop the "serve" so it isn't missing a name
+			d.Reset()
+			d.Next()
+			segment := d.NextSegment()
+			d = caddyfile.NewDispenser(slices.Delete(segment, 1, 2))
+		}
+		d.Reset()
 		var s GateServe
 		if err := caddydecl.Unmarshal(&s, d); err != nil {
 			return nil, err
 		}
 		return &s, nil
 	}
+}
+
+// globalOption is one gate global option, holding the shared config, which
+// guards need on every machine:
+//
+//	gate [name] {block}
+type globalOption struct {
+	Name string `caddydecl:"arg=0"`
+	app.Config
+}
+
+// parseGlobalOption parses a gate global option. Caddy calls it once for each
+// gate global option, passing what it returned for the previous one as
+// existing (nil for the first). That's how multiple named configs accumulate
+// into the one gate app, which Caddy only accepts as JSON.
+func parseGlobalOption(d *caddyfile.Dispenser, existing any) (any, error) {
+	gate, err := gateFromOption(existing)
+	if err != nil {
+		return nil, d.WrapErr(err)
+	}
+	var opt globalOption
+	if err := caddydecl.Unmarshal(&opt, d); err != nil {
+		return nil, err
+	}
+	if _, found := gate.Configs[opt.Name]; found {
+		return nil, d.Errf("%s config redefined", describe(opt.Name))
+	}
+	if gate.Configs == nil {
+		gate.Configs = make(map[string]app.Config)
+	}
+	gate.Configs[opt.Name] = opt.Config
+	return httpcaddyfile.App{Name: appID, Value: caddyconfig.JSON(gate, nil)}, nil
+}
+
+// gateFromOption decodes the gate app that parseGlobalOption returned for the
+// previous gate global option, if any.
+func gateFromOption(existing any) (Gate, error) {
+	var gate Gate
+	if existing == nil {
+		return gate, nil
+	}
+	existingApp, ok := existing.(httpcaddyfile.App)
+	if !ok {
+		return gate, fmt.Errorf("existing %s option of unexpected type: %T", sGate, existing)
+	}
+	err := json.Unmarshal(existingApp.Value, &gate)
+	return gate, err
 }
