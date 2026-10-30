@@ -1,9 +1,8 @@
 package caddygate
 
 import (
-	"crypto/hkdf"
+	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -20,13 +19,22 @@ import (
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 	"github.com/daaku/caddy-gate/internal/app"
 	"github.com/daaku/ensure"
-	"github.com/daaku/sookie"
 )
 
+// newKey returns a new ed25519 seed, as used for the private_key, and its
+// public key.
+func newKey() ([]byte, ed25519.PublicKey) {
+	seed := make([]byte, ed25519.SeedSize)
+	rand.Read(seed)
+	return seed, ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+}
+
+func b64(b []byte) string {
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 func TestSuccessParseCaddyfile(t *testing.T) {
-	cookieSecret := make([]byte, 32)
-	rand.Read(cookieSecret)
-	cookieSecretB64 := base64.RawURLEncoding.EncodeToString(cookieSecret)
+	seed, pub := newKey()
 
 	cases := []struct {
 		name, input string
@@ -125,7 +133,8 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 			"gate named serve block",
 			`gate serve example.com {
 				data_dir /foo/bar
-				secret "` + cookieSecretB64 + `"
+				private_key "` + b64(seed) + `"
+				public_key "` + b64(pub) + `"
 				auth_base_url https://foo.com
 				sign_in_url https://auth.foo.com
 				default_next https://admin.foo.com
@@ -149,7 +158,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 			&GateServe{
 				Name: "example.com",
 				Config: &app.Config{
-					Secret:           cookieSecret,
+					PublicKey:        pub,
 					SignInURL:        "https://auth.foo.com",
 					CookieDomain:     "foo.com",
 					CookieNamePrefix: "foo",
@@ -172,6 +181,7 @@ func TestSuccessParseCaddyfile(t *testing.T) {
 					},
 				},
 				ServeConfig: app.ServeConfig{
+					PrivateKey:  seed,
 					DataDir:     "/foo/bar",
 					AuthBaseURL: "https://foo.com",
 					DefaultNext: "https://admin.foo.com",
@@ -235,14 +245,14 @@ func TestErrorParseCaddyfile(t *testing.T) {
 		{
 			"gate invalid default serve missing b64",
 			`gate {
-				secret
+				public_key
 			}`,
-			"key secret has no value",
+			"key public_key has no value",
 		},
 		{
 			"gate invalid default serve b64",
 			`gate {
-				secret "$"
+				private_key "$"
 			}`,
 			"illegal base64 data",
 		},
@@ -289,16 +299,15 @@ func TestMissingAssociatedConfigNamed(t *testing.T) {
 }
 
 func newValidApp(t testing.TB) *app.App {
-	secret := make([]byte, 32)
-	rand.Read(secret)
+	seed, _ := newKey()
 	a, err := app.NewApp(app.Config{
-		Secret: secret,
 		Users: []app.User{
 			{ID: "zaphod", Tags: []string{"admin"}},
 			{ID: "marvin"},
 		},
 	}, app.ServeConfig{
-		DataDir: t.TempDir(),
+		PrivateKey: seed,
+		DataDir:    t.TempDir(),
 		RP: app.RelyingParty{
 			ID:          "foo.com",
 			DisplayName: "Foo",
@@ -347,15 +356,14 @@ func TestGateIsNotSignedInNextURL(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			secret := make([]byte, 32)
-			rand.Read(secret)
+			seed, _ := newKey()
 			a, err := app.NewApp(app.Config{
-				Secret: secret,
 				Users: []app.User{
 					{ID: "neo"},
 				},
 			}, app.ServeConfig{
-				DataDir: t.TempDir(),
+				PrivateKey: seed,
+				DataDir:    t.TempDir(),
 				RP: app.RelyingParty{
 					ID:          "example.com",
 					DisplayName: "Example",
@@ -376,20 +384,9 @@ func TestGateIsNotSignedInNextURL(t *testing.T) {
 			ensure.DeepEqual(t, w.Code, http.StatusSeeOther)
 			loc, err := url.Parse(w.Header().Get("Location"))
 			ensure.Nil(t, err)
-			next, err := sookie.Open[string](
-				guardNextSecret(t, secret), loc.Query().Get("next"))
-			ensure.Nil(t, err)
-			ensure.DeepEqual(t, next, c.expected)
+			ensure.DeepEqual(t, loc.Query().Get("next"), c.expected)
 		})
 	}
-}
-
-// guardNextSecret mirrors the derivation of the app's next url secret.
-func guardNextSecret(t testing.TB, secret []byte) []byte {
-	t.Helper()
-	next, err := hkdf.Expand(sha256.New, secret, "next", 32)
-	ensure.Nil(t, err)
-	return next
 }
 
 // newSignedInApp returns an app with a single user "neo", along with a valid
@@ -397,15 +394,14 @@ func guardNextSecret(t testing.TB, secret []byte) []byte {
 // guard running on a different machine from the one users sign in on.
 func newSignedInApp(t testing.TB) (*app.App, string) {
 	t.Helper()
-	secret := make([]byte, 32)
-	rand.Read(secret)
+	seed, _ := newKey()
 	a, err := app.NewApp(app.Config{
-		Secret: secret,
 		Users: []app.User{
 			{ID: "neo"},
 		},
 	}, app.ServeConfig{
-		DataDir: t.TempDir(),
+		PrivateKey: seed,
+		DataDir:    t.TempDir(),
 		RP: app.RelyingParty{
 			ID:          "example.com",
 			DisplayName: "Example",
@@ -413,10 +409,7 @@ func newSignedInApp(t testing.TB) (*app.App, string) {
 		},
 	})
 	ensure.Nil(t, err)
-	authSecret, err := hkdf.Expand(sha256.New, secret, "authCookie", 32)
-	ensure.Nil(t, err)
-	auth, err := sookie.Seal(authSecret, time.Now().Add(time.Hour), "neo")
-	ensure.Nil(t, err)
+	auth := app.SignSession(ed25519.NewKeyFromSeed(seed), time.Now().Add(time.Hour), "neo")
 	return a, auth
 }
 
@@ -453,11 +446,9 @@ func TestGateInvalidCookieRedirectsToSignIn(t *testing.T) {
 			},
 		},
 	}
-	// sealed with a different secret, as happens after rotating it
-	otherSecret := make([]byte, 32)
-	rand.Read(otherSecret)
-	stale, err := sookie.Seal(otherSecret, time.Now().Add(time.Hour), "zaphod")
-	ensure.Nil(t, err)
+	// signed with a different key, as happens after rotating it
+	otherSeed, _ := newKey()
+	stale := app.SignSession(ed25519.NewKeyFromSeed(otherSeed), time.Now().Add(time.Hour), "zaphod")
 	for _, value := range []string{stale, "garbage"} {
 		r := httptest.NewRequest("GET", "/", nil)
 		r.AddCookie(&http.Cookie{Name: "gate-a", Value: value})
@@ -532,19 +523,12 @@ func TestGateStripsSpoofedIdentityHeaders(t *testing.T) {
 	}
 }
 
-func newSecretB64(t testing.TB) ([]byte, string) {
-	t.Helper()
-	secret := make([]byte, 32)
-	rand.Read(secret)
-	return secret, base64.RawURLEncoding.EncodeToString(secret)
-}
-
 func TestParseGlobalOption(t *testing.T) {
-	secret, secretB64 := newSecretB64(t)
+	_, pub := newKey()
 	var existing any
 	for _, input := range []string{
 		`gate {
-			secret "` + secretB64 + `"
+			public_key "` + b64(pub) + `"
 			cookie_domain example.com
 			sign_in_url https://auth.example.com
 			users {
@@ -552,7 +536,7 @@ func TestParseGlobalOption(t *testing.T) {
 			}
 		}`,
 		`gate other.com {
-			secret "` + secretB64 + `"
+			public_key "` + b64(pub) + `"
 			cookie_domain other.com
 			sign_in_url https://auth.other.com
 			users {
@@ -571,13 +555,13 @@ func TestParseGlobalOption(t *testing.T) {
 	ensure.Nil(t, json.Unmarshal(gateApp.Value, &gate))
 	ensure.DeepEqual(t, gate.Configs, map[string]app.Config{
 		"": {
-			Secret:       secret,
+			PublicKey:    pub,
 			CookieDomain: "example.com",
 			SignInURL:    "https://auth.example.com",
 			Users:        app.Users{{ID: "neo", Name: "Neo", Tags: []string{"admin"}}},
 		},
 		"other.com": {
-			Secret:       secret,
+			PublicKey:    pub,
 			CookieDomain: "other.com",
 			SignInURL:    "https://auth.other.com",
 			Users:        app.Users{{ID: "trinity"}},
@@ -603,6 +587,13 @@ func TestParseGlobalOptionErrors(t *testing.T) {
 			}`,
 			"unrecognized key: rp",
 		},
+		{
+			"private key",
+			`gate {
+				private_key AAAA
+			}`,
+			"unrecognized key: private_key",
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -619,15 +610,17 @@ func TestParseGlobalOptionRedefined(t *testing.T) {
 	ensure.StringContains(t, err.Error(), "default gate config redefined")
 }
 
-func newGlobalConfig(t testing.TB) app.Config {
+// newGlobalConfig returns a valid global config, along with the private key
+// for it.
+func newGlobalConfig(t testing.TB) (app.Config, []byte) {
 	t.Helper()
-	secret, _ := newSecretB64(t)
+	seed, pub := newKey()
 	return app.Config{
-		Secret:       secret,
+		PublicKey:    pub,
 		CookieDomain: "example.com",
 		SignInURL:    "https://auth.example.com",
 		Users:        app.Users{{ID: "neo", Tags: []string{"admin"}}},
-	}
+	}, seed
 }
 
 func newProvisionedGate(t testing.TB, configs map[string]app.Config) *Gate {
@@ -638,7 +631,7 @@ func newProvisionedGate(t testing.TB, configs map[string]app.Config) *Gate {
 }
 
 func TestGateProvisionInvalidConfig(t *testing.T) {
-	c := newGlobalConfig(t)
+	c, _ := newGlobalConfig(t)
 	c.SignInURL = ""
 	g := &Gate{Configs: map[string]app.Config{"example.com": c}}
 	ensure.Err(t, g.Provision(caddy.Context{}),
@@ -646,8 +639,9 @@ func TestGateProvisionInvalidConfig(t *testing.T) {
 }
 
 func TestServeWithGlobalConfig(t *testing.T) {
-	gate := newProvisionedGate(t, map[string]app.Config{"": newGlobalConfig(t)})
-	s := GateServe{ServeConfig: app.ServeConfig{DataDir: t.TempDir()}}
+	c, seed := newGlobalConfig(t)
+	gate := newProvisionedGate(t, map[string]app.Config{"": c})
+	s := GateServe{ServeConfig: app.ServeConfig{PrivateKey: seed, DataDir: t.TempDir()}}
 	ensure.Nil(t, s.provision(gate))
 	ensure.True(t, gate.served[""])
 	ensure.True(t, gate.verifiers[""] == s.app.Verifier())
@@ -655,12 +649,13 @@ func TestServeWithGlobalConfig(t *testing.T) {
 
 func TestServeWithInlineConfig(t *testing.T) {
 	gate := newProvisionedGate(t, nil)
-	c := newGlobalConfig(t)
+	c, seed := newGlobalConfig(t)
 	c.CookieDomain, c.SignInURL = "", ""
 	s := GateServe{
 		Config: &c,
 		ServeConfig: app.ServeConfig{
-			DataDir: t.TempDir(),
+			PrivateKey: seed,
+			DataDir:    t.TempDir(),
 			RP: app.RelyingParty{
 				ID:      "example.com",
 				Origins: []string{"https://auth.example.com"},
@@ -676,11 +671,12 @@ func TestServeWithInlineConfig(t *testing.T) {
 }
 
 func TestServeProvisionErrors(t *testing.T) {
-	gate := newProvisionedGate(t, map[string]app.Config{"": newGlobalConfig(t)})
+	c, seed := newGlobalConfig(t)
+	gate := newProvisionedGate(t, map[string]app.Config{"": c})
 
 	both := GateServe{
-		Config:      new(newGlobalConfig(t)),
-		ServeConfig: app.ServeConfig{DataDir: t.TempDir()},
+		Config:      &c,
+		ServeConfig: app.ServeConfig{PrivateKey: seed, DataDir: t.TempDir()},
 	}
 	ensure.Err(t, both.provision(gate),
 		regexp.MustCompile("default gate config defined both globally and inline"))
@@ -689,25 +685,22 @@ func TestServeProvisionErrors(t *testing.T) {
 	ensure.Err(t, neither.provision(gate),
 		regexp.MustCompile(`gate "foo" serve used without defining the gate "foo" config`))
 
-	first := GateServe{ServeConfig: app.ServeConfig{DataDir: t.TempDir()}}
+	first := GateServe{ServeConfig: app.ServeConfig{PrivateKey: seed, DataDir: t.TempDir()}}
 	ensure.Nil(t, first.provision(gate))
-	again := GateServe{ServeConfig: app.ServeConfig{DataDir: t.TempDir()}}
+	again := GateServe{ServeConfig: app.ServeConfig{PrivateKey: seed, DataDir: t.TempDir()}}
 	ensure.Err(t, again.provision(gate), regexp.MustCompile("default gate serve redefined"))
 }
 
 // A guard only needs the global config, so it works on a machine that
 // doesn't serve sign-in.
 func TestGuardWithGlobalConfigOnly(t *testing.T) {
-	c := newGlobalConfig(t)
+	c, seed := newGlobalConfig(t)
 	gate := newProvisionedGate(t, map[string]app.Config{"": c})
 	g := GateGuard{gate: gate}
 	gate.guarded = append(gate.guarded, g.Name)
 	ensure.Nil(t, gate.Start())
 
-	authSecret, err := hkdf.Expand(sha256.New, c.Secret, "authCookie", 32)
-	ensure.Nil(t, err)
-	auth, err := sookie.Seal(authSecret, time.Now().Add(time.Hour), "neo")
-	ensure.Nil(t, err)
+	auth := app.SignSession(ed25519.NewKeyFromSeed(seed), time.Now().Add(time.Hour), "neo")
 	r := httptest.NewRequest("GET", "/", nil)
 	r.AddCookie(&http.Cookie{Name: "gate-a", Value: auth})
 	var upstream *http.Request
@@ -726,17 +719,18 @@ func TestGuardWithGlobalConfigOnly(t *testing.T) {
 }
 
 func TestGateStartGuardWithoutConfig(t *testing.T) {
-	gate := newProvisionedGate(t, map[string]app.Config{"": newGlobalConfig(t)})
+	c, _ := newGlobalConfig(t)
+	gate := newProvisionedGate(t, map[string]app.Config{"": c})
 	gate.guarded = []string{"", "foo"}
 	ensure.Err(t, gate.Start(),
 		regexp.MustCompile(`gate "foo" guard used without defining the gate "foo" config`))
 }
 
 func TestAdaptCaddyfile(t *testing.T) {
-	_, secretB64 := newSecretB64(t)
+	seed, pub := newKey()
 	input := `{
 		gate {
-			secret "` + secretB64 + `"
+			public_key "` + b64(pub) + `"
 			cookie_domain example.com
 			sign_in_url https://auth.example.com
 			users {
@@ -747,6 +741,7 @@ func TestAdaptCaddyfile(t *testing.T) {
 
 	http://auth.example.com {
 		gate serve {
+			private_key "` + b64(seed) + `"
 			data_dir ` + t.TempDir() + `
 		}
 	}

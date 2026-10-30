@@ -1,11 +1,11 @@
-# Local demo only. Never reuse this secret, see the readme.
+# Local demo only. Never reuse this private_key, see the readme.
 {
 	admin off
 	auto_https disable_redirects
 	https_port 4430
 
 	gate {
-		secret "gd0NcHq9CtemAxiUino3Mtj_rSeJC5k-Uz-tHnI-KKY"
+		public_key "HRYfwvuigGujV20ZesmQT0MZn4zoZfGCw5qOlhuDyGY"
 		cookie_domain caddygate.com
 		sign_in_url https://auth.caddygate.com:4430
 		users {
@@ -19,6 +19,7 @@
 auth.caddygate.com {
 	tls internal
 	gate serve {
+		private_key "b1gfcqdfHI9vAjM6gSCpiVAENR_2KWZuzQe3uoNebw8"
 		data_dir {$HOME}/.local/share/caddy/gate/caddygate.com
 		default_next https://home.caddygate.com:4430
 		rp {

@@ -245,11 +245,7 @@ func (g *GateGuard) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		if nextURL.Host == "" {
 			nextURL.Host = r.Host
 		}
-		next, err := g.verifier.SealNextURL(nextURL.String())
-		if err != nil {
-			return fmt.Errorf("unable to seal next url: %w", err)
-		}
-		signInURL := fmt.Sprintf("%s?next=%s", g.verifier.SignInURL(), url.QueryEscape(next))
+		signInURL := fmt.Sprintf("%s?next=%s", g.verifier.SignInURL(), url.QueryEscape(nextURL.String()))
 		http.Redirect(w, r, signInURL, http.StatusSeeOther)
 		return nil
 	}

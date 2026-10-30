@@ -4,11 +4,13 @@ package app
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,18 +65,21 @@ type RelyingParty struct {
 // needed to check a session, and nothing that is only needed to create one.
 // This is typically instantiated by the gate global option.
 type Config struct {
-	CookieDomain     string        `json:"cookieDomain,omitempty"`
-	CookiePath       string        `json:"cookiePath,omitempty"`
-	CookieNamePrefix string        `json:"cookieNamePrefix,omitempty"`
-	CookieTTL        time.Duration `json:"cookieTTL,omitempty"`
-	Secret           []byte        `json:"secret,omitempty"`
-	SignInURL        string        `json:"signInURL,omitempty"`
-	Users            Users         `json:"users,omitempty"`
+	CookieDomain     string            `json:"cookieDomain,omitempty"`
+	CookiePath       string            `json:"cookiePath,omitempty"`
+	CookieNamePrefix string            `json:"cookieNamePrefix,omitempty"`
+	CookieTTL        time.Duration     `json:"cookieTTL,omitempty"`
+	PublicKey        ed25519.PublicKey `json:"publicKey,omitempty"`
+	SignInURL        string            `json:"signInURL,omitempty"`
+	Users            Users             `json:"users,omitempty"`
 }
 
 // ServeConfig is only needed where sign-in is served. This is typically
 // instantiated by the GateServe caddyfile directive.
 type ServeConfig struct {
+	// PrivateKey is the 32 byte ed25519 seed, which signs sessions. It is only
+	// needed here, guards verify sessions with the PublicKey in Config.
+	PrivateKey  []byte        `json:"privateKey,omitempty"`
 	DataDir     string        `json:"dataDir,omitempty"`
 	InviteTTL   time.Duration `json:"inviteTTL,omitempty"`
 	AuthBaseURL string        `json:"authBaseURL,omitempty"`
@@ -131,7 +136,7 @@ func (u waUser) WebAuthnCredentials() []webauthn.Credential { return u.credentia
 // is not signed in.
 func IsNotSignedInError(err error) bool {
 	return errors.Is(err, http.ErrNoCookie) ||
-		errors.Is(err, sookie.ErrExpired) ||
+		errors.Is(err, ErrSessionExpired) ||
 		errors.Is(err, ErrUserNotFound) ||
 		errors.Is(err, ErrInvalidCookie)
 }
@@ -140,8 +145,49 @@ func IsNotSignedInError(err error) bool {
 var ErrUserNotFound = errors.New("user not found")
 
 // ErrInvalidCookie indicates the auth cookie was present but could not be
-// opened, for example because the secret was rotated.
+// verified, for example because the key was rotated.
 var ErrInvalidCookie = errors.New("invalid auth cookie")
+
+// ErrSessionExpired indicates the auth cookie was valid, but has expired.
+var ErrSessionExpired = errors.New("session expired")
+
+// sessionContext is prepended to signed sessions, so the signature can't be
+// confused with one the key may make for some other purpose.
+const sessionContext = "caddy-gate session\x00"
+
+func sessionMessage(expires []byte, userID string) []byte {
+	return slices.Concat([]byte(sessionContext), expires, []byte(userID))
+}
+
+// SignSession returns the auth cookie value for the user, which is the
+// signature, followed by the expiry and the user ID.
+func SignSession(key ed25519.PrivateKey, expires time.Time, userID string) string {
+	exp := binary.BigEndian.AppendUint64(nil, uint64(expires.Unix()))
+	sig := ed25519.Sign(key, sessionMessage(exp, userID))
+	return base64.RawURLEncoding.EncodeToString(slices.Concat(sig, exp, []byte(userID)))
+}
+
+// VerifySession returns the user ID from an auth cookie value created by
+// SignSession.
+func VerifySession(key ed25519.PublicKey, raw string) (string, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid session encoding: %w", err)
+	}
+	if len(decoded) < ed25519.SignatureSize+8 {
+		return "", errors.New("session too short")
+	}
+	sig, exp, userID := decoded[:ed25519.SignatureSize],
+		decoded[ed25519.SignatureSize:ed25519.SignatureSize+8],
+		string(decoded[ed25519.SignatureSize+8:])
+	if !ed25519.Verify(key, sessionMessage(exp, userID), sig) {
+		return "", errors.New("invalid session signature")
+	}
+	if time.Now().Unix() > int64(binary.BigEndian.Uint64(exp)) {
+		return "", ErrSessionExpired
+	}
+	return userID, nil
+}
 
 type keyStore struct {
 	path string
@@ -325,8 +371,6 @@ func (s *inviteStore) Take(inviteID string) (*invite, error) {
 type Verifier struct {
 	config Config
 
-	authCookieSecret   []byte
-	nextSecret         []byte
 	registerCookieName string
 	signInCookieName   string
 	authCookieName     string
@@ -350,8 +394,8 @@ func NewVerifier(c Config) (*Verifier, error) {
 	if c.CookieNamePrefix == "" {
 		c.CookieNamePrefix = "gate-"
 	}
-	if len(c.Secret) != 32 {
-		return nil, serr.Errorf("must provide a secret of length 32")
+	if len(c.PublicKey) != ed25519.PublicKeySize {
+		return nil, serr.Errorf("must provide a public_key of length %d", ed25519.PublicKeySize)
 	}
 	if len(c.Users) == 0 {
 		return nil, serr.Errorf("must configure some users")
@@ -361,8 +405,6 @@ func NewVerifier(c Config) (*Verifier, error) {
 		registerCookieName: c.CookieNamePrefix + "r",
 		signInCookieName:   c.CookieNamePrefix + "l",
 		authCookieName:     c.CookieNamePrefix + "a",
-		authCookieSecret:   hkdfExpand(c.Secret, "authCookie"),
-		nextSecret:         hkdfExpand(c.Secret, "next"),
 	}, nil
 }
 
@@ -376,6 +418,7 @@ type App struct {
 	verifier *Verifier
 	serve    ServeConfig
 
+	sessionKey           ed25519.PrivateKey
 	registerCookieSecret []byte
 	signInCookieSecret   []byte
 
@@ -423,8 +466,19 @@ func urlOrigin(raw string) string {
 
 // NewApp validates the configs, sets defaults and returns a functional App.
 // The relying party and the shared config default from each other, since they
-// are almost always the same domain and origin.
+// are almost always the same domain and origin. The public key defaults from
+// the private key.
 func NewApp(c Config, s ServeConfig) (*App, error) {
+	if len(s.PrivateKey) != ed25519.SeedSize {
+		return nil, serr.Errorf("must provide a private_key of length %d", ed25519.SeedSize)
+	}
+	sessionKey := ed25519.NewKeyFromSeed(s.PrivateKey)
+	publicKey := sessionKey.Public().(ed25519.PublicKey)
+	if c.PublicKey == nil {
+		c.PublicKey = publicKey
+	} else if !publicKey.Equal(c.PublicKey) {
+		return nil, serr.Errorf("public_key does not match private_key")
+	}
 	if s.RP.ID == "" {
 		s.RP.ID = strings.TrimPrefix(c.CookieDomain, ".")
 	}
@@ -482,8 +536,9 @@ func NewApp(c Config, s ServeConfig) (*App, error) {
 		verifier:             v,
 		serve:                s,
 		wa:                   wa,
-		registerCookieSecret: hkdfExpand(c.Secret, "registerCookie"),
-		signInCookieSecret:   hkdfExpand(c.Secret, "signInCookie"),
+		sessionKey:           sessionKey,
+		registerCookieSecret: hkdfExpand(s.PrivateKey, "registerCookie"),
+		signInCookieSecret:   hkdfExpand(s.PrivateKey, "signInCookie"),
 	}
 	a.invites.ttl = a.serve.InviteTTL
 
@@ -537,6 +592,13 @@ func (a *App) signInCookie() http.Cookie {
 	}
 }
 
+// setAuthCookie signs the user in.
+func (a *App) setAuthCookie(w http.ResponseWriter, userID string) {
+	c := a.verifier.authCookie()
+	c.Value = SignSession(a.sessionKey, time.Now().Add(a.verifier.config.CookieTTL), userID)
+	http.SetCookie(w, &c)
+}
+
 func (a *Verifier) authCookie() http.Cookie {
 	return http.Cookie{
 		Name:     a.authCookieName,
@@ -584,10 +646,14 @@ func (a *App) wrap(f func(http.ResponseWriter, *http.Request) error) http.Handle
 // Use IsNotSignedInError to check if the error indicates no signed in User.
 // Errors will trigger clearing the cookie.
 func (a *Verifier) CurrentUser(w http.ResponseWriter, r *http.Request) (User, error) {
-	userID, err := sookie.Get[string](a.authCookieSecret, r, a.authCookieName)
+	cookie, err := r.Cookie(a.authCookieName)
+	if err != nil {
+		return User{}, serr.Wrap(err)
+	}
+	userID, err := VerifySession(a.config.PublicKey, cookie.Value)
 	if err != nil {
 		sookie.Del(w, r, a.authCookie()) // clear faulty cookies
-		if errors.Is(err, http.ErrNoCookie) || errors.Is(err, sookie.ErrExpired) {
+		if errors.Is(err, ErrSessionExpired) {
 			return User{}, serr.Wrap(err)
 		}
 		return User{}, serr.Errorf("%w: %w", ErrInvalidCookie, err)
@@ -629,25 +695,10 @@ func (a *Verifier) StripCookies(r *http.Request) {
 	}
 }
 
-// SealNextURL seals the URL for use as the next parameter in the sign-in flow.
-func (a *Verifier) SealNextURL(u string) (string, error) {
-	return sookie.Seal(a.nextSecret, time.Now().Add(time.Hour*24), u)
-}
-
-// OpenNextURL opens the sealed URL from the next parameter in the sign-in flow.
-// Only https URLs on the cookie domain are accepted, since those are the only
-// places the auth cookie works.
-func (a *Verifier) OpenNextURL(u string) (string, error) {
-	raw, err := sookie.Open[string](a.nextSecret, u)
-	if err != nil {
-		return "", err
-	}
-	if !a.isAllowedNext(raw) {
-		return "", serr.Errorf("next url not allowed: %q", raw)
-	}
-	return raw, nil
-}
-
+// isAllowedNext checks the next parameter in the sign-in flow. Guards can't
+// sign it, since they don't have the private key, so only https URLs on the
+// cookie domain are accepted, since those are the only places the auth cookie
+// works.
 func (a *Verifier) isAllowedNext(raw string) bool {
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed.Scheme != "https" || parsed.User != nil {
@@ -840,9 +891,7 @@ func (a *App) pkCreatePost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := sookie.Set(a.verifier.authCookieSecret, w, user.user.ID, a.verifier.authCookie()); err != nil {
-		return serr.Wrap(err)
-	}
+	a.setAuthCookie(w, user.user.ID)
 
 	http.Redirect(w, r, a.serve.DefaultNext, http.StatusSeeOther)
 	return nil
@@ -894,20 +943,15 @@ func (a *App) signInPost(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 
-	if err := sookie.Set(a.verifier.authCookieSecret, w, user.ID, a.verifier.authCookie()); err != nil {
-		return serr.Wrap(err)
-	}
+	a.setAuthCookie(w, user.ID)
 
-	var nextURL string
+	nextURL := a.serve.DefaultNext
 	if givenNext := r.FormValue(inputNext); givenNext != "" {
-		nextURL, err = a.verifier.OpenNextURL(givenNext)
-		if err != nil {
-			log.Println(err)
+		if a.verifier.isAllowedNext(givenNext) {
+			nextURL = givenNext
+		} else {
+			log.Printf("next url not allowed: %q", givenNext)
 		}
-
-	}
-	if nextURL == "" {
-		nextURL = a.serve.DefaultNext
 	}
 
 	http.Redirect(w, r, nextURL, http.StatusSeeOther)

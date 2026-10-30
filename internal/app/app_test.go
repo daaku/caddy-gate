@@ -2,6 +2,7 @@ package app
 
 import (
 	"crypto/ecdsa"
+	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -25,23 +26,23 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 )
 
-func newTestApp(t testing.TB) *App {
-	t.Helper()
-	secret := make([]byte, 32)
-	rand.Read(secret)
-	return newTestAppWithSecret(t, secret)
+// newTestKey returns a new ed25519 seed, as used for the private_key.
+func newTestKey() []byte {
+	seed := make([]byte, ed25519.SeedSize)
+	rand.Read(seed)
+	return seed
 }
 
-func newTestAppWithSecret(t testing.TB, secret []byte) *App {
+func newTestApp(t testing.TB) *App {
 	t.Helper()
 	a, err := NewApp(Config{
-		Secret: secret,
 		Users: Users{
 			{ID: "zaphod", Tags: []string{tagAdmin}},
 			{ID: "marvin"},
 		},
 	}, ServeConfig{
-		DataDir: t.TempDir(),
+		PrivateKey: newTestKey(),
+		DataDir:    t.TempDir(),
 		RP: RelyingParty{
 			ID:          "example.com",
 			DisplayName: "Example",
@@ -94,25 +95,19 @@ func TestIsAllowedNext(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.next, func(t *testing.T) {
 			ensure.DeepEqual(t, a.verifier.isAllowedNext(c.next), c.allowed)
-			sealed, err := a.verifier.SealNextURL(c.next)
-			ensure.Nil(t, err)
-			_, err = a.verifier.OpenNextURL(sealed)
-			ensure.DeepEqual(t, err == nil, c.allowed)
 		})
 	}
 }
 
 func TestBootstrapInviteIsForFirstAdmin(t *testing.T) {
-	secret := make([]byte, 32)
-	rand.Read(secret)
 	a, err := NewApp(Config{
-		Secret: secret,
 		Users: Users{
 			{ID: "marvin"},
 			{ID: "zaphod", Tags: []string{tagAdmin}},
 		},
 	}, ServeConfig{
-		DataDir: t.TempDir(),
+		PrivateKey: newTestKey(),
+		DataDir:    t.TempDir(),
 		RP: RelyingParty{
 			ID:          "example.com",
 			DisplayName: "Example",
@@ -379,13 +374,12 @@ func TestRegistrationRequiresDiscoverableCredential(t *testing.T) {
 }
 
 // A session created on the machine users sign in on must work on another
-// machine (a guard) that shares the config and secret but has no keys.json.
-func TestSignInSessionWorksWithoutLocalKeys(t *testing.T) {
-	secret := make([]byte, 32)
-	rand.Read(secret)
-	auth := newTestAppWithSecret(t, secret)
-	guard := newTestAppWithSecret(t, secret)
-	ensure.DeepEqual(t, len(guard.keys.All()), 0)
+// machine (a guard) that only has the shared config, with the public key, and
+// neither the private key nor keys.json.
+func TestSignInSessionWorksWithOnlyPublicKey(t *testing.T) {
+	auth := newTestApp(t)
+	guard, err := NewVerifier(auth.verifier.config)
+	ensure.Nil(t, err)
 
 	ta := newTestAuthenticator(t, auth, auth.verifier.config.Users[1])
 	challenge, cookies := beginSignIn(t, auth)
@@ -396,17 +390,47 @@ func TestSignInSessionWorksWithoutLocalKeys(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.AddCookie(cookie)
-	user, err := guard.verifier.CurrentUser(httptest.NewRecorder(), r)
+	user, err := guard.CurrentUser(httptest.NewRecorder(), r)
 	ensure.Nil(t, err)
 	ensure.DeepEqual(t, user.ID, ta.user.ID)
 }
 
+func TestVerifySession(t *testing.T) {
+	key := ed25519.NewKeyFromSeed(newTestKey())
+	pub := key.Public().(ed25519.PublicKey)
+	valid := SignSession(key, time.Now().Add(time.Hour), "neo")
+	userID, err := VerifySession(pub, valid)
+	ensure.Nil(t, err)
+	ensure.DeepEqual(t, userID, "neo")
+
+	_, err = VerifySession(pub, SignSession(key, time.Now().Add(-time.Second), "neo"))
+	ensure.True(t, errors.Is(err, ErrSessionExpired))
+
+	// a different user ID with the original signature
+	decoded, err := base64.RawURLEncoding.DecodeString(valid)
+	ensure.Nil(t, err)
+	tampered := base64.RawURLEncoding.EncodeToString(
+		append(decoded[:len(decoded)-len("neo")], "zaphod"...))
+
+	otherKey := ed25519.NewKeyFromSeed(newTestKey())
+	for name, raw := range map[string]string{
+		"other key": SignSession(otherKey, time.Now().Add(time.Hour), "neo"),
+		"tampered":  tampered,
+		"short":     base64.RawURLEncoding.EncodeToString(decoded[:ed25519.SignatureSize]),
+		"garbage":   "$",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := VerifySession(pub, raw)
+			ensure.NotNil(t, err)
+			ensure.False(t, errors.Is(err, ErrSessionExpired))
+		})
+	}
+}
+
 func TestNewVerifierErrors(t *testing.T) {
 	valid := func() Config {
-		secret := make([]byte, 32)
-		rand.Read(secret)
 		return Config{
-			Secret:       secret,
+			PublicKey:    ed25519.NewKeyFromSeed(newTestKey()).Public().(ed25519.PublicKey),
 			CookieDomain: "example.com",
 			SignInURL:    "https://auth.example.com",
 			Users:        Users{{ID: "neo"}},
@@ -419,7 +443,7 @@ func TestNewVerifierErrors(t *testing.T) {
 	}{
 		{"cookie domain", func(c *Config) { c.CookieDomain = "" }, "must specify cookie_domain"},
 		{"sign in url", func(c *Config) { c.SignInURL = "" }, "must specify sign_in_url"},
-		{"secret", func(c *Config) { c.Secret = c.Secret[:16] }, "secret of length 32"},
+		{"public key", func(c *Config) { c.PublicKey = c.PublicKey[:16] }, "public_key of length 32"},
 		{"users", func(c *Config) { c.Users = nil }, "must configure some users"},
 	}
 	for _, c := range cases {
@@ -437,15 +461,13 @@ func TestNewVerifierErrors(t *testing.T) {
 }
 
 func TestNewAppRelyingPartyDefaultsFromSignInURL(t *testing.T) {
-	secret := make([]byte, 32)
-	rand.Read(secret)
 	a, err := NewApp(Config{
-		Secret:       secret,
 		CookieDomain: ".example.com",
 		SignInURL:    "https://auth.example.com/sign-in",
 		Users:        Users{{ID: "neo"}},
 	}, ServeConfig{
-		DataDir: t.TempDir(),
+		PrivateKey: newTestKey(),
+		DataDir:    t.TempDir(),
 	})
 	ensure.Nil(t, err)
 	ensure.DeepEqual(t, a.serve.RP.ID, "example.com")
@@ -457,4 +479,36 @@ func TestNewAppConfigDefaultsFromRelyingParty(t *testing.T) {
 	a := newTestApp(t)
 	ensure.DeepEqual(t, a.verifier.config.CookieDomain, "example.com")
 	ensure.DeepEqual(t, a.verifier.SignInURL(), "https://auth.example.com")
+}
+
+func TestNewAppKeys(t *testing.T) {
+	seed := newTestKey()
+	pub := ed25519.NewKeyFromSeed(seed).Public().(ed25519.PublicKey)
+	newApp := func(pub ed25519.PublicKey, seed []byte) (*App, error) {
+		return NewApp(Config{
+			PublicKey: pub,
+			Users:     Users{{ID: "neo"}},
+		}, ServeConfig{
+			PrivateKey: seed,
+			DataDir:    t.TempDir(),
+			RP: RelyingParty{
+				ID:      "example.com",
+				Origins: []string{"https://auth.example.com"},
+			},
+		})
+	}
+
+	a, err := newApp(pub, seed)
+	ensure.Nil(t, err)
+	ensure.DeepEqual(t, a.verifier.config.PublicKey, pub)
+
+	a, err = newApp(nil, seed)
+	ensure.Nil(t, err)
+	ensure.DeepEqual(t, a.verifier.config.PublicKey, pub)
+
+	_, err = newApp(pub, nil)
+	ensure.StringContains(t, err.Error(), "must provide a private_key of length 32")
+
+	_, err = newApp(pub, newTestKey())
+	ensure.StringContains(t, err.Error(), "public_key does not match private_key")
 }
